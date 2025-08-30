@@ -14,7 +14,7 @@ pub type ParserMessage {
   Parse(reply_with: Subject(Dict(Int, #(Float, Float))))
 }
 
-fn handle_parser_message(state, message: ParserMessage) {
+fn handle_message(state, message: ParserMessage) {
   case message {
     Parse(client) -> {
       let contents = case
@@ -38,12 +38,13 @@ fn handle_parser_message(state, message: ParserMessage) {
                 })
 
               case parsed {
-                [geoid, latitude, longitude] ->
+                [geoid, latitude, longitude] -> {
+                  let geoid = int.parse(geoid) |> result.unwrap(0)
+                  let latitude = float.parse(latitude) |> result.unwrap(0.0)
+                  let longitude = float.parse(longitude) |> result.unwrap(0.0)
                   table
-                  |> dict.insert(int.parse(geoid) |> result.unwrap(0), #(
-                    float.parse(latitude) |> result.unwrap(0.0),
-                    float.parse(longitude) |> result.unwrap(0.0),
-                  ))
+                  |> dict.insert(geoid, #(latitude, longitude))
+                }
                 _ -> table
               }
             })
@@ -61,7 +62,7 @@ fn handle_parser_message(state, message: ParserMessage) {
 
 pub fn new() {
   let assert Ok(actor) =
-    actor.new([]) |> actor.on_message(handle_parser_message) |> actor.start
+    actor.new([]) |> actor.on_message(handle_message) |> actor.start
   actor.data
 }
 
