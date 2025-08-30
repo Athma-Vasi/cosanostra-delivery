@@ -29,8 +29,8 @@ fn handle_parser_message(state, message: ParserMessage) {
                 row
                 |> string.trim
                 |> string.split(on: "\t")
-                |> list.index_fold(from: [], with: fn(array, item, idx) {
-                  case idx == 1 || idx == 6 || idx == 7 {
+                |> list.index_fold(from: [], with: fn(array, item, index) {
+                  case index == 1 || index == 6 || index == 7 {
                     True -> array |> list.append([item])
                     False -> array
                   }

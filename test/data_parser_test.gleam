@@ -1,21 +1,16 @@
-import gleam/io
+import gleam/dict
 import gleam/list
 import gleam/result
 import gleam/string
 import postal_code/data_parser
 
 pub fn data_parser_test() {
-  todo
-  // let parser = data_parser.new()
-  // let data = data_parser.parse(parser)
-  // let split =
-  //   data
-  //   |> string.split(on: "\n")
-  //   |> list.first
-  //   |> result.unwrap("splitting error")
-  //   |> string.trim
+  let parser = data_parser.new()
+  let data = data_parser.parse(parser)
+  let #(geoid, #(latitude, longitude)) =
+    data |> dict.to_list |> list.first |> result.unwrap(#("", #("", "")))
 
-  // let header =
-  //   "USPS\tGEOID\tALAND\tAWATER\tALAND_SQMI\tAWATER_SQMI\tINTPTLAT\tINTPTLONG"
-  // assert header == split
+  assert string.length(geoid) != 0
+    && string.length(latitude) != 0
+    && string.length(longitude) != 0
 }
