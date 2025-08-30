@@ -1,6 +1,7 @@
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
-import gleam/io
+import gleam/float
+import gleam/int
 import gleam/list
 import gleam/otp/actor
 import gleam/result
@@ -10,7 +11,7 @@ import simplifile
 const timeout: Int = 5000
 
 pub type ParserMessage {
-  Parse(reply_with: Subject(Dict(String, #(String, String))))
+  Parse(reply_with: Subject(Dict(Int, #(Float, Float))))
 }
 
 fn handle_parser_message(state, message: ParserMessage) {
@@ -25,7 +26,7 @@ fn handle_parser_message(state, message: ParserMessage) {
             |> string.split(on: "\n")
             |> list.drop(up_to: 1)
             |> list.fold(from: dict.new(), with: fn(table, row) {
-              let selected =
+              let parsed =
                 row
                 |> string.trim
                 |> string.split(on: "\t")
@@ -36,9 +37,13 @@ fn handle_parser_message(state, message: ParserMessage) {
                   }
                 })
 
-              case selected {
+              case parsed {
                 [geoid, latitude, longitude] ->
-                  table |> dict.insert(geoid, #(latitude, longitude))
+                  table
+                  |> dict.insert(int.parse(geoid) |> result.unwrap(0), #(
+                    float.parse(latitude) |> result.unwrap(0.0),
+                    float.parse(longitude) |> result.unwrap(0.0),
+                  ))
                 _ -> table
               }
             })
