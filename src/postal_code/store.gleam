@@ -13,10 +13,8 @@ pub type StoreMessage {
 fn handle_message(state, message: StoreMessage) {
   case message {
     GetCoordinates(client, geoid) -> {
-      let parser = data_parser.new()
-      let data = data_parser.parse(parser)
       let #(latitude, longitude) =
-        data |> dict.get(geoid) |> result.unwrap(#(0.0, 0.0))
+        state |> dict.get(geoid) |> result.unwrap(#(0.0, 0.0))
 
       actor.send(client, #(latitude, longitude))
       actor.continue(state)
@@ -25,7 +23,16 @@ fn handle_message(state, message: StoreMessage) {
 }
 
 pub fn new() {
+  let state = data_parser.new() |> data_parser.parse
   let assert Ok(actor) =
-    actor.new([]) |> actor.on_message(handle_message) |> actor.start
+    actor.new(state)
+    |> actor.on_message(handle_message)
+    |> actor.start
+
   actor.data
+}
+
+pub fn get_coordinates(parcel: Subject(StoreMessage), geoid: Int) {
+  actor.call(parcel, timeout, GetCoordinates(_, geoid))
+  //   actor.send(parcel, GetCoordinates(_, geoid))
 }
