@@ -1,24 +1,32 @@
 import gleam/dict
+import gleam/erlang/process
 import gleam/float
 import gleam/int
 import gleam/io
-import gleam/pair
-import postal_code/data_parser
-import postal_code/store
+import gleam/list
+import gleam/otp/actor
+import gleam/otp/static_supervisor as supervisor
+import gleam/otp/supervision
+import gleam/result
+import gleam/string
+import simplifile
+
+import postal_code/sup
 
 pub fn main() -> Nil {
-  // let parser = data_parser.new()
-  // let data = data_parser.parse(parser)
-  // data
-  // |> dict.each(fn(key, tuple) {
-  //   let lat = pair.first(tuple)
-  //   let long = pair.second(tuple)
-  //   io.println(
-  //     int.to_string(key) <> float.to_string(lat) <> float.to_string(long),
-  //   )
-  // })
-  let store_actor = store.new()
+  let test_geoid = 56_001_962_700
+  let test_lat = 41.3021863
+  let test_long = -105.6324812
+  let store_sup_subject = sup.start_supervisor()
   let #(latitude, longitude) =
-    store.get_coordinates(store_actor, 56_001_962_700)
-  io.println(float.to_string(latitude) <> "\t" <> float.to_string(longitude))
+    sup.get_coordinates(store_sup_subject, test_geoid)
+
+  io.println(
+    "lat"
+    <> float.to_string(latitude)
+    <> "\t"
+    <> "long"
+    <> float.to_string(longitude),
+  )
+  Nil
 }

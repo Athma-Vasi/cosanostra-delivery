@@ -18,7 +18,7 @@ fn handle_message(state, message: ParserMessage) {
   case message {
     Parse(client) -> {
       let contents = case
-        simplifile.read(from: "src/data/wyoming_census_gazeteer.txt")
+        simplifile.read(from: "src/data/wyoming_census_gazetteer.txt")
       {
         Ok(contents) -> {
           let coordinate_table =
