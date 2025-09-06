@@ -4,6 +4,8 @@ import gleam/otp/actor
 import gleam/result
 import postal_code/data_parser
 
+const timeout: Int = 5000
+
 pub type StoreMessage {
   GetCoordinates(reply_with: process.Subject(#(Float, Float)), geoid: Int)
 }
@@ -27,4 +29,8 @@ pub fn new(name: process.Name(StoreMessage)) {
   |> actor.on_message(handle_message)
   |> actor.named(name)
   |> actor.start
+}
+
+pub fn get_coordinates(subject: process.Subject(StoreMessage), geoid: Int) {
+  actor.call(subject, timeout, GetCoordinates(_, geoid))
 }
