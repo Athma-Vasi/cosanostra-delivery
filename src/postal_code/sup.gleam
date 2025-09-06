@@ -1,6 +1,4 @@
 import gleam/erlang/process
-import gleam/io
-import gleam/otp/actor
 import gleam/otp/static_supervisor as supervisor
 import gleam/otp/supervision
 import postal_code/navigator
@@ -21,7 +19,7 @@ pub fn start_supervisor(
   process.Subject(store.StoreMessage),
   process.Subject(navigator.NavigatorMessage),
 ) {
-  let sup =
+  let _sup =
     supervisor.new(supervisor.OneForOne)
     |> supervisor.add(supervision.worker(start_parser(store_name)))
     |> supervisor.add(supervision.worker(start_navigator(navigator_name)))

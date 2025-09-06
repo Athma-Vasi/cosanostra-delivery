@@ -1,5 +1,4 @@
 import gleam/erlang/process
-import gleam/otp/actor
 import postal_code/navigator
 import postal_code/store
 
@@ -10,10 +9,13 @@ pub fn navigator_test() {
   let store_name = process.new_name("parser_store")
   let assert Ok(_store) = store.new(store_name)
   let store_subject = process.named_subject(store_name)
-  //   navigator.get_distance(
-  //     navigator_subject,
-  //     56_001_962_700,
-  //     56_001_962_800,
-  //     store_subject,
-  //   )
+  let distance =
+    navigator.get_distance(
+      navigator_subject,
+      56_001_962_700,
+      56_001_962_800,
+      store_subject,
+    )
+
+  assert distance == 2.17
 }

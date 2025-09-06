@@ -1,23 +1,65 @@
-import gleam/dict
 import gleam/erlang/process
+import gleam/float
 import gleam/otp/actor
+import gleam/result
+import gleam_community/maths
 import postal_code/store
+
+// km
+const radius = 6371.0
 
 const timeout: Int = 5000
 
 pub type NavigatorMessage {
   GetDistance(
-    reply_with: process.Subject(Int),
+    reply_with: process.Subject(Float),
     from: Int,
     to: Int,
     store_subject: process.Subject(store.StoreMessage),
   )
 }
 
-fn handle_message(state: List(Nil), message: NavigatorMessage) {
+fn degrees_to_radians(degrees: Float) -> Float {
+  degrees *. { 3.14159 /. 180.0 }
+}
+
+fn calculate_distance(from: #(Float, Float), to: #(Float, Float)) -> Float {
+  let #(lat1, long1) = from
+  let #(lat2, long2) = to
+
+  let lat_diff = degrees_to_radians(lat2 -. lat1)
+  let long_diff = degrees_to_radians(long2 -. long1)
+
+  let cos_lat1 = maths.cos(lat1)
+  let cos_lat2 = maths.cos(lat2)
+
+  let sin_lat_diff_sq =
+    maths.sin(lat_diff /. 2.0) |> float.power(2.0) |> result.unwrap(0.0)
+  let sin_long_diff_sq =
+    maths.sin(long_diff /. 2.0) |> float.power(2.0) |> result.unwrap(0.0)
+  let a = sin_lat_diff_sq +. { cos_lat1 *. cos_lat2 *. sin_long_diff_sq }
+  let c =
+    2.0
+    *. maths.atan2(
+      float.square_root(a) |> result.unwrap(0.0),
+      float.square_root(1.0 -. a) |> result.unwrap(0.0),
+    )
+
+  maths.round_to_nearest(radius *. c, 2)
+}
+
+fn handle_message(
+  state: List(Nil),
+  message: NavigatorMessage,
+) -> actor.Next(List(Nil), a) {
   case message {
     GetDistance(client, from, to, store_subject) -> {
-      todo
+      let here = store.get_coordinates(store_subject, from)
+      let there = store.get_coordinates(store_subject, to)
+      let distance = calculate_distance(here, there)
+
+      actor.send(client, distance)
+      actor.continue(state)
     }
   }
 }
@@ -36,6 +78,6 @@ pub fn get_distance(
   from: Int,
   to: Int,
   store_subject: process.Subject(store.StoreMessage),
-) {
+) -> Float {
   actor.call(subject, timeout, GetDistance(_, from, to, store_subject))
 }
