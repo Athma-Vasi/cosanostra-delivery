@@ -21,21 +21,11 @@ pub fn start_supervisor(
   store_name: process.Name(store.StoreMessage),
   navigator_name: process.Name(navigator.NavigatorMessage),
   cache_name: process.Name(cache.CacheMessage),
-) -> #(
-  process.Subject(store.StoreMessage),
-  process.Subject(navigator.NavigatorMessage),
-  process.Subject(cache.CacheMessage),
-) {
-  let _sup =
-    supervisor.new(supervisor.OneForOne)
-    |> supervisor.add(supervision.worker(start_parser(store_name)))
-    |> supervisor.add(supervision.worker(start_navigator(navigator_name)))
-    |> supervisor.add(supervision.worker(start_cache(cache_name)))
-    |> supervisor.start
-
-  // create and return subjects for names
-  let store_subject = process.named_subject(store_name)
-  let navigator_subject = process.named_subject(navigator_name)
-  let cache_subject = process.named_subject(cache_name)
-  #(store_subject, navigator_subject, cache_subject)
+) -> supervision.ChildSpecification(supervisor.Supervisor) {
+  supervisor.new(supervisor.OneForOne)
+  |> supervisor.add(supervision.worker(start_parser(store_name)))
+  |> supervisor.add(supervision.worker(start_navigator(navigator_name)))
+  |> supervisor.add(supervision.worker(start_cache(cache_name)))
+  |> supervisor.restart_tolerance(intensity: 3, period: 1000)
+  |> supervisor.supervised()
 }
