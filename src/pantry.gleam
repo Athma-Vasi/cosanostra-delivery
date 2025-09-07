@@ -2,7 +2,7 @@ import gleam/erlang/process.{type Subject}
 import gleam/otp/actor
 import gleam/set.{type Set}
 
-const timeout: Int = 5000
+const timeout = 5000
 
 pub type Message {
   AddItem(item: String)

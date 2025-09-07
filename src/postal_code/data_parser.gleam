@@ -8,7 +8,7 @@ import gleam/result
 import gleam/string
 import simplifile
 
-const timeout: Int = 5000
+const timeout = 5000
 
 pub type ParserMessage {
   Parse(reply_with: Subject(Dict(Int, #(Float, Float))))

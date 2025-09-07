@@ -5,10 +5,10 @@ import gleam/result
 import gleam_community/maths
 import postal_code/store
 
-// km
+// km of great circle (Terra)
 const radius = 6371.0
 
-const timeout: Int = 5000
+const timeout = 5000
 
 pub type NavigatorMessage {
   GetDistance(
@@ -45,7 +45,7 @@ fn calculate_distance(from: #(Float, Float), to: #(Float, Float)) -> Float {
       float.square_root(1.0 -. a) |> result.unwrap(0.0),
     )
 
-  maths.round_to_nearest(radius *. c, 2)
+  radius *. c |> maths.round_to_nearest(2)
 }
 
 fn handle_message(

@@ -4,7 +4,7 @@ import gleam/otp/actor
 import gleam/result
 import postal_code/data_parser
 
-const timeout: Int = 5000
+const timeout = 5000
 
 pub type StoreMessage {
   GetCoordinates(reply_with: process.Subject(#(Float, Float)), geoid: Int)
