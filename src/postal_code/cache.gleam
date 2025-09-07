@@ -33,15 +33,11 @@ pub fn new(
   |> actor.start
 }
 
-pub fn get_distance_cached(
-  subject: process.Subject(CacheMessage),
-  from: Int,
-  to: Int,
-) {
+pub fn get_distance(subject: process.Subject(CacheMessage), from: Int, to: Int) {
   actor.call(subject, timeout, GetDistance(_, from, to))
 }
 
-pub fn set_distance_cached(
+pub fn set_distance(
   subject: process.Subject(CacheMessage),
   distance: Float,
   from: Int,

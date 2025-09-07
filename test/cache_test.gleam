@@ -9,7 +9,7 @@ pub fn cache_test() {
   let test_distance = 244.33
   let test_from = 56_001_962_700
   let test_to = 56_045_951_300
-  cache.set_distance_cached(cache_subject, test_distance, test_from, test_to)
-  let distance = cache.get_distance_cached(cache_subject, test_from, test_to)
+  cache.set_distance(cache_subject, test_distance, test_from, test_to)
+  let distance = cache.get_distance(cache_subject, test_from, test_to)
   assert distance == 244.33
 }
