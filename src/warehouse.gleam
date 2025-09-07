@@ -1,22 +1,24 @@
 import gleam/erlang/process
+import gleam/float
+import gleam/io
 import gleam/otp/static_supervisor
 import postal_code/navigator
 import postal_code/sup
 
-pub fn sup_test() {
+pub fn start() {
   let store_name = process.new_name("parser_store")
   let navigator_name = process.new_name("navigator")
   let cache_name = process.new_name("cache")
-
-  let store_subject = process.named_subject(store_name)
-  let navigator_subject = process.named_subject(navigator_name)
-  let cache_subject = process.named_subject(cache_name)
 
   let sup_spec = sup.start_supervisor(store_name, navigator_name, cache_name)
   let assert Ok(_overmind) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(sup_spec)
     |> static_supervisor.start()
+
+  let store_subject = process.named_subject(store_name)
+  let navigator_subject = process.named_subject(navigator_name)
+  let cache_subject = process.named_subject(cache_name)
 
   let distance =
     navigator.get_distance(
@@ -27,5 +29,5 @@ pub fn sup_test() {
       cache_subject,
     )
 
-  assert distance == 244.33
+  distance |> float.to_string |> io.println
 }
