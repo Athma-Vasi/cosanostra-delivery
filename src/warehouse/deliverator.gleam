@@ -1,15 +1,12 @@
-import gleam/dict
 import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/otp/actor
-import warehouse/receiver
 
 pub type DeliveratorMessage {
   DeliverPackages(
     // reply_with: process.Subject(Bool),
-    packages: dict.Dict(String, String),
-    receiver_subject: process.Subject(receiver.ReceiverMessage),
+    packages: List(#(String, String)),
   )
 }
 
@@ -31,10 +28,7 @@ fn make_delivery() -> Nil {
   maybe_crash()
 }
 
-fn deliver_helper(
-  packages: List(#(String, String)),
-  receiver_subject: process.Subject(receiver.ReceiverMessage),
-) -> Nil {
+fn deliver_helper(packages: List(#(String, String))) -> Nil {
   case packages {
     [] -> Nil
     [top, ..rest] -> {
@@ -44,16 +38,13 @@ fn deliver_helper(
       )
       make_delivery()
       //   actor.send(receiver_subject)
-      deliver_helper(rest, receiver_subject)
+      deliver_helper(rest)
     }
   }
 }
 
-fn deliver(
-  packages: dict.Dict(String, String),
-  receiver_subject: process.Subject(receiver.ReceiverMessage),
-) -> Nil {
-  dict.to_list(packages) |> deliver_helper(receiver_subject)
+fn deliver(packages: List(#(String, String))) -> Nil {
+  deliver_helper(packages)
 }
 
 fn handle_message(
@@ -61,8 +52,8 @@ fn handle_message(
   message: DeliveratorMessage,
 ) -> actor.Next(List(Nil), a) {
   case message {
-    DeliverPackages(packages, receiver_subject) -> {
-      deliver(packages, receiver_subject)
+    DeliverPackages(packages) -> {
+      deliver(packages)
       actor.continue(state)
     }
   }
@@ -78,4 +69,11 @@ pub fn new(
   |> actor.on_message(handle_message)
   |> actor.named(name)
   |> actor.start
+}
+
+pub fn receive(
+  packages: List(#(String, String)),
+  subject: process.Subject(DeliveratorMessage),
+) -> Nil {
+  actor.send(subject, DeliverPackages(packages))
 }
