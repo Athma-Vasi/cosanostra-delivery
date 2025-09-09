@@ -31,13 +31,12 @@ fn make_delivery() -> Nil {
 fn deliver_helper(packages: List(#(String, String))) -> Nil {
   case packages {
     [] -> Nil
-    [top, ..rest] -> {
-      let #(package_id, content) = top
+    [package, ..rest] -> {
+      let #(package_id, content) = package
       io.println(
         "Deliverator: " <> package_id <> "\t" <> "delivering " <> content,
       )
       make_delivery()
-      //   actor.send(receiver_subject)
       deliver_helper(rest)
     }
   }
