@@ -56,31 +56,15 @@ fn handle_message(
     }
 
     DeliveratorFailure(deliverator_subject) -> {
-      let packages =
+      let rest_packages =
         state
         |> dict.fold(from: [], with: fn(acc, package, _deliverator_subject) {
           [package, ..acc]
         })
 
-      deliverator.receive(packages, deliverator_subject)
+      deliverator.receive(rest_packages, deliverator_subject)
       actor.continue(state)
     }
-    // DeliveratorFailure(new_deliverator_subject) -> {
-    //   let #(packages, updated) =
-    //     state
-    //     |> dict.fold(
-    //       from: #([], dict.new()),
-    //       with: fn(acc, package, _old_deliverator_subject) {
-    //         let #(packages, updated) = acc
-    //         #(
-    //           [package, ..packages],
-    //           updated |> dict.insert(package, new_deliverator_subject),
-    //         )
-    //       },
-    //     )
-    //   deliverator.receive(packages, new_deliverator_subject)
-    //   actor.continue(updated)
-    // }
   }
 }
 
@@ -91,4 +75,11 @@ pub fn new(
   |> actor.on_message(handle_message)
   |> actor.named(name)
   |> actor.start
+}
+
+pub fn deliverator_failure(
+  this_subject: process.Subject(ReceiverMessage),
+  deliverator_subject: process.Subject(deliverator.DeliveratorMessage),
+) {
+  actor.send(this_subject, DeliveratorFailure(deliverator_subject))
 }

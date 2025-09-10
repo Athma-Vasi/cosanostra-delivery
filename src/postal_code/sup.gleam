@@ -1,5 +1,5 @@
 import gleam/erlang/process
-import gleam/otp/static_supervisor as supervisor
+import gleam/otp/static_supervisor
 import gleam/otp/supervision
 import postal_code/cache
 import postal_code/navigator
@@ -21,11 +21,11 @@ pub fn start_supervisor(
   store_name: process.Name(store.StoreMessage),
   navigator_name: process.Name(navigator.NavigatorMessage),
   cache_name: process.Name(cache.CacheMessage),
-) -> supervision.ChildSpecification(supervisor.Supervisor) {
-  supervisor.new(supervisor.OneForOne)
-  |> supervisor.add(supervision.worker(start_parser(store_name)))
-  |> supervisor.add(supervision.worker(start_navigator(navigator_name)))
-  |> supervisor.add(supervision.worker(start_cache(cache_name)))
-  |> supervisor.restart_tolerance(intensity: 3, period: 1000)
-  |> supervisor.supervised()
+) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(supervision.worker(start_parser(store_name)))
+  |> static_supervisor.add(supervision.worker(start_navigator(navigator_name)))
+  |> static_supervisor.add(supervision.worker(start_cache(cache_name)))
+  |> static_supervisor.restart_tolerance(intensity: 3, period: 1000)
+  |> static_supervisor.supervised()
 }
