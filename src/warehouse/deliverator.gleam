@@ -1,6 +1,7 @@
 import gleam/erlang/process
 import gleam/int
 import gleam/io
+import gleam/list
 import gleam/otp/actor
 
 pub type DeliveratorMessage {
@@ -16,7 +17,7 @@ fn maybe_crash() -> Nil {
   case crash_factor > 60 {
     True -> {
       io.println("Uncle Enzo is not pleased... delivery deadline missed!")
-      panic
+      panic as "panic! at the warehouse"
     }
     False -> Nil
   }
@@ -28,22 +29,24 @@ fn make_delivery() -> Nil {
   maybe_crash()
 }
 
-fn deliver_helper(packages: List(#(String, String))) -> Nil {
+fn deliver(packages: List(#(String, String))) -> Nil {
+  packages
+  |> list.each(fn(package) {
+    let #(id, content) = package
+    io.println("id: " <> id <> "content: " <> content)
+  })
+
   case packages {
     [] -> Nil
     [package, ..rest] -> {
       let #(package_id, content) = package
       io.println(
-        "Deliverator: " <> package_id <> "\t" <> "delivering " <> content,
+        "Deliverator " <> "delivering " <> package_id <> "\t" <> content,
       )
       make_delivery()
-      deliver_helper(rest)
+      deliver(rest)
     }
   }
-}
-
-fn deliver(packages: List(#(String, String))) -> Nil {
-  deliver_helper(packages)
 }
 
 fn handle_message(
@@ -71,8 +74,9 @@ pub fn new(
 }
 
 pub fn receive(
+  this_subject: process.Subject(DeliveratorMessage),
   packages: List(#(String, String)),
-  subject: process.Subject(DeliveratorMessage),
 ) -> Nil {
-  actor.send(subject, DeliverPackages(packages))
+  io.println("Deliverator has received packages")
+  actor.send(this_subject, DeliverPackages(packages))
 }

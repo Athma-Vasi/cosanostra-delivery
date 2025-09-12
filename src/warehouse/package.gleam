@@ -5,7 +5,9 @@ import gleam/string
 import youid/uuid
 
 pub fn random_content() -> String {
-  let content_options = ["Book", "Broom", "Soap", "Pen"]
+  let content_options = [
+    "Carbon paper", "Rolodex", "Protractor", "Fountain pen",
+  ]
   let rand_idx = content_options |> list.length |> int.random
   let content =
     content_options
@@ -26,7 +28,7 @@ pub fn generate_package_id() -> String {
 
 fn random_batch_helper(batch: dict.Dict(String, String), amount) {
   case amount == 0 {
-    True -> batch
+    True -> batch |> dict.to_list
     False -> {
       let rand_id = generate_package_id()
       let rand_content = random_content()
@@ -36,6 +38,6 @@ fn random_batch_helper(batch: dict.Dict(String, String), amount) {
   }
 }
 
-pub fn random_batch(amount: Int) {
+pub fn random_batch(amount: Int) -> List(#(String, String)) {
   random_batch_helper(dict.new(), amount)
 }
