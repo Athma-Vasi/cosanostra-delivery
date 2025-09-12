@@ -15,7 +15,7 @@ pub fn start() -> Nil {
     |> static_supervisor.add(sup_spec)
     |> static_supervisor.start()
 
-  let random_batch = package.random_batch(3)
+  let random_batch = package.random_batch(10)
   let receiver_subject = process.named_subject(receiver_name)
   let deliverator_subject = process.named_subject(deliverator_name)
   subs.receive_packages(deliverator_subject, receiver_subject, random_batch)

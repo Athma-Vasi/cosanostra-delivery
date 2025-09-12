@@ -33,9 +33,6 @@ fn handle_receiver_message(
 
   case message {
     ReceivePackages(deliverator_subject, receiver_subject, packages) -> {
-      io.println(
-        "Received " <> packages |> list.length |> int.to_string <> " packages",
-      )
       send_to_deliverator(deliverator_subject, receiver_subject, packages)
       let updated =
         packages
@@ -46,21 +43,17 @@ fn handle_receiver_message(
     }
 
     DeliveratorSuccess(package) -> {
-      let updated = package_tracker |> dict.delete(package)
-
-      updated
-      |> dict.each(fn(key, _value) {
-        let #(package_id, content) = key
-        io.println("DeliveratorSuccess: " <> package_id <> content)
-      })
-      actor.continue(#(updated, deliverator_restarts))
+      actor.continue(#(
+        package_tracker |> dict.delete(package),
+        deliverator_restarts,
+      ))
     }
 
     DeliveratorRestart(deliverator_subject, receiver_subject) -> {
       case deliverator_restarts == 0 {
         // if just starting, wait for packages,
         True -> Nil
-        // else send packages belonging to newly restarted deliverator
+        // else send packages belonging to newly recovered deliverator
         False -> {
           let rest_packages =
             package_tracker
@@ -102,7 +95,6 @@ pub fn receive_packages(
   receiver_subject: process.Subject(ReceiverMessage),
   packages: List(#(String, String)),
 ) -> Nil {
-  io.println("Receiver received packages")
   actor.send(
     receiver_subject,
     ReceivePackages(deliverator_subject, receiver_subject, packages),
@@ -113,7 +105,6 @@ pub fn deliverator_success(
   receiver_subject: process.Subject(ReceiverMessage),
   package: #(String, String),
 ) {
-  io.println("Receiver received deliverator success")
   actor.send(receiver_subject, DeliveratorSuccess(package))
 }
 
@@ -121,7 +112,6 @@ pub fn deliverator_restart(
   receiver_subject: process.Subject(ReceiverMessage),
   deliverator_subject: process.Subject(DeliveratorMessage),
 ) -> Nil {
-  io.println("Receiver received deliverator restart")
   process.sleep(100)
   actor.send(
     receiver_subject,
@@ -160,21 +150,13 @@ fn deliver(
   packages: List(#(String, String)),
   receiver_subject: process.Subject(ReceiverMessage),
 ) -> Nil {
-  packages
-  |> list.each(fn(package) {
-    let #(id, content) = package
-    io.println("id: " <> id <> "content: " <> content)
-  })
-
   case packages {
     [] -> Nil
     [package, ..rest] -> {
-      let #(package_id, content) = package
-      io.println(
-        "Deliverator " <> "delivering " <> package_id <> "\t" <> content,
-      )
       make_delivery()
       deliverator_success(receiver_subject, package)
+      let #(package_id, content) = package
+      io.println("Delivering: " <> package_id <> "\t" <> content)
       deliver(rest, receiver_subject)
     }
   }
@@ -198,6 +180,7 @@ pub fn new_deliverator(
   actor.Started(process.Subject(DeliveratorMessage)),
   actor.StartError,
 ) {
+  io.println("Deliverator started")
   actor.new([])
   |> actor.on_message(handle_deliverator_message)
   |> actor.named(name)
@@ -209,6 +192,12 @@ pub fn send_to_deliverator(
   receiver_subject: process.Subject(ReceiverMessage),
   packages: List(#(String, String)),
 ) -> Nil {
-  io.println("Deliverator has received packages")
+  io.println("Deliverator received these packages: ")
+  packages
+  |> list.each(fn(package) {
+    let #(package_id, content) = package
+    io.println("\t" <> "id: " <> package_id <> "\t" <> "content: " <> content)
+  })
+
   actor.send(deliverator_subject, DeliverPackages(receiver_subject, packages))
 }
