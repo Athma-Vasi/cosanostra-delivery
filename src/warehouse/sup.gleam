@@ -11,42 +11,13 @@ fn start_deliverator(
     let deliverator_subject = process.named_subject(deliverator_name)
     let receiver_subject = process.named_subject(receiver_name)
 
+    // sent every time deliverator starts
+    // receiver actor keeps track of restarts in its state
     subs.deliverator_restart(receiver_subject, deliverator_subject)
     subs.new_deliverator(deliverator_name)
   }
 }
 
-// fn start_deliverator(
-//   name: process.Name(deliverator.DeliveratorMessage),
-//   receiver_name: process.Name(receiver.ReceiverMessage),
-//   deliverator_monitor_name: process.Name(
-//     deliverator_monitor.DeliveratorMonitorMessage,
-//   ),
-// ) {
-//   fn() {
-//     let deliverator_subject = process.named_subject(name)
-//     let receiver_subject = process.named_subject(receiver_name)
-//     let deliverator_monitor_subject =
-//       process.named_subject(deliverator_monitor_name)
-//     // receiver.deliverator_restart(receiver_subject, deliverator_subject)
-//     deliverator_monitor.deliverator_restart(
-//       deliverator_monitor_subject,
-//       deliverator_subject,
-//       receiver_subject,
-//     )
-
-//     deliverator.new(name)
-//   }
-// }
-
-// fn start_deliverator_monitor(
-//   name: process.Name(deliverator_monitor.DeliveratorMonitorMessage),
-// ) {
-//   fn() { deliverator_monitor.new(name) }
-// }
-
-// create a fn with restart counter so first start is below
-// and next starts trigger receiver message
 fn start_receiver(name: process.Name(subs.ReceiverMessage)) {
   fn() { subs.new_receiver(name) }
 }
