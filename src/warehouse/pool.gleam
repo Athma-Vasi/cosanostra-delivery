@@ -7,15 +7,12 @@ import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/string
 
+const batch_size = 5
+
 pub type DeliveratorPoolMessage {
   ReceivePackages(
     deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
     packages: List(#(String, String)),
-  )
-
-  SwitchDeliveratorStatus(
-    deliverator_subject: process.Subject(DeliveratorMessage),
-    status: DeliveratorStatus,
   )
 
   DeliveratorSuccess(
@@ -23,10 +20,13 @@ pub type DeliveratorPoolMessage {
     package: #(String, String),
   )
 
-  DeliveratorRestart(deliverator_subject: process.Subject(DeliveratorMessage))
+  DeliveratorRestart(
+    deliverator_subject: process.Subject(DeliveratorMessage),
+    deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+  )
 }
 
-pub type DeliveratorStatus {
+type DeliveratorStatus {
   Busy
   Idle
 }
@@ -55,7 +55,7 @@ fn handle_pool_message(
       let updated_queue =
         packages
         |> list.fold(from: packages_queue, with: fn(acc, package) {
-          [package, ..acc]
+          acc |> list.append([package])
         })
 
       case available_deliverators {
@@ -63,44 +63,107 @@ fn handle_pool_message(
         [] -> {
           actor.continue(#(updated_queue, status_tracker, package_tracker))
         }
-        [deliverator_subject, ..rest] -> {
-          let batch = updated_queue |> list.take(5)
-          send_to_deliverator(
-            deliverator_subject,
-            deliverator_pool_subject,
-            batch,
-          )
+        // if one available, update state and send to deliverator
+        [deliverator_subject, ..] -> {
+          let #(batch, sliced_queue) =
+            updated_queue
+            |> list.index_fold(from: #([], []), with: fn(acc, package, idx) {
+              let #(batch, sliced_queue) = acc
+              case idx < batch_size {
+                True -> #([package, ..batch], sliced_queue)
+                False -> #(batch, sliced_queue |> list.append([package]))
+              }
+            })
+
           let updated_package_tracker =
             batch
             |> list.fold(from: package_tracker, with: fn(acc, package) {
               acc |> dict.insert(package, deliverator_subject)
             })
+
           let updated_status_tracker =
             status_tracker
             |> dict.fold(
               from: dict.new(),
               with: fn(acc, deliverator_subject_, status) {
                 case deliverator_subject == deliverator_subject_ {
-                  True -> acc |> dict.insert(deliverator_subject, Busy)
-                  False -> acc |> dict.insert(deliverator_subject, status)
+                  True -> acc |> dict.insert(deliverator_subject_, Busy)
+                  False -> acc |> dict.insert(deliverator_subject_, status)
                 }
               },
             )
 
-          actor.continue(updated_queue,updated_status_tracker,updated_package_tracker)
+          send_to_deliverator(
+            deliverator_subject,
+            deliverator_pool_subject,
+            batch,
+          )
+
+          actor.continue(#(
+            sliced_queue,
+            updated_status_tracker,
+            updated_package_tracker,
+          ))
         }
-          actor.continue(updated_queue,updated_status_tracker,updated_package_tracker)
       }
-
-      todo
     }
 
-    SwitchDeliveratorStatus(deliverator_subject, status) -> {
-      todo
-    }
+    DeliveratorRestart(deliverator_subject, deliverator_pool_subject) -> {
+      let updated_status_tracker =
+        status_tracker
+        |> dict.fold(
+          from: dict.new(),
+          with: fn(acc, deliverator_subject_, status) {
+            case deliverator_subject == deliverator_subject_ {
+              True -> acc |> dict.insert(deliverator_subject_, Idle)
+              False -> acc |> dict.insert(deliverator_subject_, status)
+            }
+          },
+        )
 
-    DeliveratorRestart(deliverator_subject) -> {
-      todo
+      case packages_queue {
+        // if no packages to deliver, update status and continue
+        [] -> {
+          actor.continue(#([], updated_status_tracker, package_tracker))
+        }
+        // if packages need to be delivered,
+        _ -> {
+          // check if any packages were assigned that were not delivered
+          let undelivered =
+            package_tracker
+            |> dict.fold(from: [], with: fn(acc, package, deliverator_subject_) {
+              case deliverator_subject == deliverator_subject_ {
+                True -> [package, ..acc]
+                False -> acc
+              }
+            })
+            |> list.take(batch_size)
+
+          case undelivered {
+            // all assigned were delivered by its previous incarnation 
+            [] -> {
+              actor.continue(#(
+                packages_queue,
+                updated_status_tracker,
+                package_tracker,
+              ))
+            }
+            // remainder to be delivered by new incarnation
+            remainder -> {
+              send_to_deliverator(
+                deliverator_subject,
+                deliverator_pool_subject,
+                remainder,
+              )
+              actor.continue(#(
+                packages_queue,
+                updated_status_tracker,
+                package_tracker,
+              ))
+            }
+          }
+        }
+      }
     }
 
     DeliveratorSuccess(deliverator_subject, package) -> {
@@ -120,7 +183,7 @@ pub fn new_pool(
       |> dict.insert(process.named_subject(deliverator_name), Idle)
     })
   let package_tracker = dict.new()
-  let state = #(status_tracker, package_tracker)
+  let state = #([], status_tracker, package_tracker)
 
   actor.new(state)
   |> actor.named(name)
