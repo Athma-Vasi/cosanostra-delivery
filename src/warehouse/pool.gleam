@@ -178,6 +178,7 @@ fn handle_pool_message(
     }
 
     PackageDelivered(delivered_package) -> {
+      // remove package from tracker as it has been delivered
       let updated_package_tracker =
         package_tracker
         |> dict.filter(keeping: fn(package_in_tracker, _deliverator_subject) {
@@ -243,7 +244,7 @@ fn handle_pool_message(
 
                 // packages in queue need to be delivered
                 packages_queue -> {
-                  // grab batch from queue
+                  // grab batch and slice queue
                   let #(batch, sliced_queue) =
                     packages_queue
                     |> list.index_fold(
@@ -304,39 +305,32 @@ fn handle_pool_message(
     }
 
     DeliveratorSuccess(deliverator_subject, deliverator_pool_subject) -> {
-      case dict.size(package_tracker) == 0 {
-        // all packages delivered, update state and continue
-        True -> {
-          let updated_status_tracker =
-            status_tracker
-            |> dict.upsert(update: deliverator_subject, with: fn(_status) {
-              Idle
-            })
+      io.println("DeliveratorSuccess: " <> string.inspect(deliverator_subject))
 
+      // check if any packages to be delivered in queue
+      case packages_queue {
+        // all packages have been assigned to deliverators
+        [] -> {
+          // change status and continue
           actor.continue(#(
             [],
-            updated_status_tracker,
+            status_tracker |> dict.insert(deliverator_subject, Idle),
             package_tracker,
             deliverator_restarts,
           ))
         }
 
-        False -> {
-          // grab batch from queue
+        // packages need to be delivered
+        packages_to_deliver -> {
+          // grab batch and slice queue
           let #(batch, sliced_queue) =
-            packages_queue
+            packages_to_deliver
             |> list.index_fold(from: #([], []), with: fn(acc, package, index) {
               let #(batch, sliced_queue) = acc
               case index < batch_size {
                 True -> #([package, ..batch], sliced_queue)
                 False -> #(batch, sliced_queue |> list.append([package]))
               }
-            })
-
-          let updated_status_tracker =
-            status_tracker
-            |> dict.upsert(update: deliverator_subject, with: fn(_status) {
-              Busy
             })
 
           let updated_package_tracker =
@@ -353,7 +347,7 @@ fn handle_pool_message(
 
           actor.continue(#(
             sliced_queue,
-            updated_status_tracker,
+            status_tracker |> dict.insert(deliverator_subject, Busy),
             updated_package_tracker,
             deliverator_restarts,
           ))
@@ -514,6 +508,9 @@ fn send_to_deliverator(
   deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
   packages: List(#(String, String)),
 ) -> Nil {
+  // simulate work over time
+  process.sleep(1000)
+
   io.println(
     "Deliverator: "
     <> string.inspect(deliverator_subject)
