@@ -435,10 +435,10 @@ pub type DeliveratorMessage {
 fn maybe_crash() -> Nil {
   let crash_factor = int.random(100)
   io.println("Crash factor: " <> int.to_string(crash_factor))
-  case crash_factor > 60 {
+  case crash_factor > 90 {
     True -> {
       io.println("Uncle Enzo is not pleased... delivery deadline missed!")
-      panic as "panic! at the warehouse"
+      panic as "Panic! At The Warehouse"
     }
     False -> Nil
   }

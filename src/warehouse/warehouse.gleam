@@ -1,9 +1,9 @@
 import constants
 import gleam/erlang/process
 import gleam/otp/static_supervisor
-import warehouse/director
 import warehouse/package
 import warehouse/pool
+import warehouse/sup
 
 pub fn start() -> Nil {
   let deliverator_pool_name = process.new_name(constants.deliverator_pool)
@@ -14,7 +14,7 @@ pub fn start() -> Nil {
   let deliverator5_name = process.new_name(constants.deliverator5)
 
   let sup_spec =
-    director.start_supervisor(
+    sup.start_supervisor(
       deliverator1_name,
       deliverator2_name,
       deliverator3_name,
