@@ -3,8 +3,8 @@ import gleam/erlang/process
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/option
 import gleam/otp/actor
+import gleam/result
 import gleam/string
 
 const batch_size = 5
@@ -66,7 +66,7 @@ fn handle_pool_message(
       io.println("Available deliverators: ")
       available_deliverators
       |> list.each(fn(deliverator) {
-        io.println("\t" <> "deliverator:" <> string.inspect(deliverator))
+        io.println("\t" <> "Deliverator:" <> string.inspect(deliverator))
       })
 
       let updated_queue =
@@ -106,23 +106,6 @@ fn handle_pool_message(
                     }
                   })
 
-                let updated_package_tracker =
-                  batch
-                  |> list.fold(
-                    from: package_tracker,
-                    with: fn(tracker_acc, package_from_batch) {
-                      tracker_acc
-                      |> dict.insert(package_from_batch, deliverator_subject)
-                    },
-                  )
-
-                // let updated_status_tracker = case batch {
-                //   [] -> status_tracker
-                //   _ -> status_tracker |> dict.insert(deliverator_subject, Busy)
-                // }
-                let updated_status_tracker =
-                  status_tracker |> dict.insert(deliverator_subject, Busy)
-
                 let sliced_queue = case batch {
                   [] -> packages_queue
                   batch -> {
@@ -138,6 +121,19 @@ fn handle_pool_message(
                     )
                   }
                 }
+
+                let updated_package_tracker =
+                  batch
+                  |> list.fold(
+                    from: package_tracker,
+                    with: fn(tracker_acc, package_from_batch) {
+                      tracker_acc
+                      |> dict.insert(package_from_batch, deliverator_subject)
+                    },
+                  )
+
+                let updated_status_tracker =
+                  status_tracker |> dict.insert(deliverator_subject, Busy)
 
                 #(sliced_queue, updated_status_tracker, updated_package_tracker)
               },
@@ -199,36 +195,28 @@ fn handle_pool_message(
     DeliveratorRestart(deliverator_subject, deliverator_pool_subject) -> {
       let restarts =
         deliverator_restarts
-        |> dict.fold(from: 0, with: fn(acc, subject, restarts) {
-          case subject == deliverator_subject {
-            True -> restarts
-            False -> acc
-          }
-        })
+        |> dict.get(deliverator_subject)
+        |> result.unwrap(0)
 
       case restarts == 0 {
-        // first time starting, just wait for message
+        // first time starting deliverator, just wait for message
         True -> {
-          actor.continue(state)
+          actor.continue(#(
+            packages_queue,
+            status_tracker,
+            package_tracker,
+            deliverator_restarts
+              |> dict.insert(deliverator_subject, restarts + 1),
+          ))
         }
+
+        // deliverator has reincarnated 
         False -> {
           let updated_deliverator_restarts =
             deliverator_restarts
-            |> dict.fold(from: dict.new(), with: fn(acc, subject, restarts) {
-              acc
-              |> dict.insert(subject, case subject == deliverator_subject {
-                True -> restarts + 1
-                False -> restarts
-              })
-            })
+            |> dict.insert(deliverator_subject, restarts + 1)
 
-          let updated_status_tracker =
-            status_tracker
-            |> dict.upsert(update: deliverator_subject, with: fn(_status) {
-              Idle
-            })
-
-          // deliver any remaining packages
+          // find any remaining packages from previous incarnation
           let remaining_packages =
             package_tracker
             |> dict.fold(from: [], with: fn(acc, package, subject) {
@@ -239,13 +227,76 @@ fn handle_pool_message(
             })
 
           case remaining_packages {
-            // if there are no remaining packages
-            // check if any packages in queue
+            // previous incarnation successfully delivered all assigned
             [] -> {
-              todo
+              // check if any packages in queue
+              case packages_queue {
+                // queue is empty, all packages delivered
+                [] -> {
+                  actor.continue(#(
+                    [],
+                    status_tracker |> dict.insert(deliverator_subject, Idle),
+                    package_tracker,
+                    updated_deliverator_restarts,
+                  ))
+                }
+
+                // packages in queue need to be delivered
+                packages_queue -> {
+                  // grab batch from queue
+                  let #(batch, sliced_queue) =
+                    packages_queue
+                    |> list.index_fold(
+                      from: #([], []),
+                      with: fn(acc, package, index) {
+                        let #(batch, sliced_queue) = acc
+                        case index < batch_size {
+                          True -> #([package, ..batch], sliced_queue)
+                          False -> #(
+                            batch,
+                            sliced_queue |> list.append([package]),
+                          )
+                        }
+                      },
+                    )
+
+                  let updated_package_tracker =
+                    batch
+                    |> list.fold(from: package_tracker, with: fn(acc, package) {
+                      acc |> dict.insert(package, deliverator_subject)
+                    })
+
+                  send_to_deliverator(
+                    deliverator_subject,
+                    deliverator_pool_subject,
+                    batch,
+                  )
+
+                  actor.continue(#(
+                    sliced_queue,
+                    status_tracker |> dict.insert(deliverator_subject, Busy),
+                    updated_package_tracker,
+                    updated_deliverator_restarts,
+                  ))
+                }
+              }
             }
+
+            // previous incarnation did not deliver all assigned
             remaining_packages -> {
-              todo
+              // send remaining packages to deliverator to try again
+              send_to_deliverator(
+                deliverator_subject,
+                deliverator_pool_subject,
+                remaining_packages,
+              )
+
+              actor.continue(#(
+                packages_queue,
+                status_tracker |> dict.insert(deliverator_subject, Busy),
+                package_tracker,
+                updated_deliverator_restarts,
+              ))
             }
           }
         }
@@ -316,14 +367,23 @@ pub fn new_pool(
   name: process.Name(DeliveratorPoolMessage),
   deliverator_names: List(process.Name(DeliveratorMessage)),
 ) {
-  let status_tracker =
+  let #(status_tracker, deliverator_restarts) =
     deliverator_names
-    |> list.fold(from: dict.new(), with: fn(acc, deliverator_name) {
-      acc
-      |> dict.insert(process.named_subject(deliverator_name), Idle)
-    })
+    |> list.fold(
+      from: #(dict.new(), dict.new()),
+      with: fn(acc, deliverator_name) {
+        let #(status_tracker, deliverator_restarts) = acc
+        let deliverator_subject = process.named_subject(deliverator_name)
+
+        #(
+          status_tracker
+            |> dict.insert(deliverator_subject, Idle),
+          deliverator_restarts |> dict.insert(deliverator_subject, 0),
+        )
+      },
+    )
   let package_tracker = dict.new()
-  let deliverator_restarts = dict.new()
+
   let state = #([], status_tracker, package_tracker, deliverator_restarts)
 
   actor.new(state)
