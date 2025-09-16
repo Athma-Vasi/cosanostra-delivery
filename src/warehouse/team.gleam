@@ -1,3 +1,4 @@
+import constants
 import gleam/dict
 import gleam/erlang/process
 import gleam/int
@@ -7,11 +8,8 @@ import gleam/option
 import gleam/otp/actor
 import gleam/result
 import gleam/string
+import gleam/time/duration
 import gleam/time/timestamp
-
-const batch_size = 5
-
-const max_pool_limit = 10
 
 pub type DeliveratorPoolMessage {
   ReceivePackages(
@@ -29,11 +27,10 @@ pub type DeliveratorPoolMessage {
     deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
   )
 
-  //   DeliveratorRestart(
-  //     deliverator_subject: process.Subject(DeliveratorMessage),
-  //     deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
-  //   )
-  StopDeliverator(deliverator_subject: process.Subject(DeliveratorMessage))
+  DeliveratorRestart(
+    deliverator_subject: process.Subject(DeliveratorMessage),
+    deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+  )
 }
 
 pub type DeliveratorStatus {
@@ -44,7 +41,7 @@ pub type DeliveratorStatus {
 type DeliveratorsTracker =
   dict.Dict(
     process.Subject(DeliveratorMessage),
-    #(DeliveratorStatus, timestamp.Timestamp, List(#(String, String))),
+    #(DeliveratorStatus, Int, List(#(String, String))),
   )
 
 type PackageQueue =
@@ -53,87 +50,102 @@ type PackageQueue =
 type DeliveratorPoolState =
   #(PackageQueue, DeliveratorsTracker)
 
-fn batch_and_slice_queue(package_queue, batch_size) {
-  package_queue
-  |> list.index_fold(from: #([], []), with: fn(acc, package, index) {
-    let #(batch, sliced_queue) = acc
-    case index < batch_size {
-      True -> #([package, ..batch], sliced_queue)
-      False -> #(batch, sliced_queue |> list.append([package]))
+// fn send_messages(
+//   deliverators_tracker: DeliveratorsTracker,
+//   package_queue: PackageQueue,
+//   deliverator_pool_subject,
+// ) -> #(PackageQueue, DeliveratorsTracker) {
+//   deliverators_tracker
+//   |> dict.fold(
+//     from: #(package_queue, deliverators_tracker),
+//     with: fn(acc, deliverator_subject, tracking_info) {
+//       let #(package_queue, deliverators_tracker) = acc
+//       let #(status, restarts, _packages) = tracking_info
+
+//       case status {
+//         Busy -> #(package_queue, deliverators_tracker)
+//         Idle -> {
+//           let #(batch, sliced_queue) =
+//             batch_and_slice_queue(package_queue, constants.batch_size)
+
+//           let updated_deliverators_tracker =
+//             deliverators_tracker
+//             |> dict.insert(deliverator_subject, #(Busy, restarts, batch))
+
+//           send_to_deliverator(
+//             deliverator_subject,
+//             deliverator_pool_subject,
+//             batch,
+//           )
+
+//           #(sliced_queue, updated_deliverators_tracker)
+//         }
+//       }
+//     },
+//   )
+// }
+
+fn send_remaining_batches(batches, deliverators, deliverator_pool_subject) {
+  case batches, deliverators {
+    [], [] -> Nil
+
+    [batch, ..rest_batches], [deliverator, ..rest_deliverators] -> {
+      send_to_deliverator(deliverator, deliverator_pool_subject, batch)
+      send_remaining_batches(
+        rest_batches,
+        rest_deliverators,
+        deliverator_pool_subject,
+      )
     }
-  })
+
+    // both batches and deliverators must be same size
+    _, _ -> Nil
+  }
 }
 
-fn send_message_and_update_tracker(
-  deliverators_tracker: DeliveratorsTracker,
-  package_queue: PackageQueue,
-  deliverator_pool_subject,
-) -> #(PackageQueue, DeliveratorsTracker) {
-  deliverators_tracker
-  |> dict.fold(
-    from: #(package_queue, deliverators_tracker),
-    with: fn(acc, deliverator_subject, tracking_info) {
-      let #(package_queue, deliverators_tracker) = acc
-      let #(status, _deliverator_start_time, _packages) = tracking_info
-
-      case status {
-        Busy -> #(package_queue, deliverators_tracker)
-        Idle -> {
-          let #(batch, sliced_queue) =
-            batch_and_slice_queue(package_queue, batch_size)
-
-          let updated_deliverators_tracker =
-            deliverators_tracker
-            |> dict.insert(deliverator_subject, #(
-              Busy,
-              timestamp.system_time(),
-              batch,
-            ))
-
-          send_to_deliverator(
-            deliverator_subject,
-            deliverator_pool_subject,
-            batch,
-          )
-
-          #(sliced_queue, updated_deliverators_tracker)
-        }
-      }
-    },
-  )
-}
-
-fn create_deliverators(
-  deliverators_tracker: DeliveratorsTracker,
-  amount: Int,
-) -> DeliveratorsTracker {
-  case amount == 0 {
-    True -> deliverators_tracker
+fn batch_and_slice_queue_helper(
+  batches: List(List(#(String, String))),
+  sliced_queue: PackageQueue,
+  counter,
+  available_deliverators_count,
+) {
+  case counter == available_deliverators_count {
+    True -> #(batches, sliced_queue)
 
     False -> {
-      let assert Ok(deliverator) = new_deliverator()
-      let deliverator_subject = deliverator.data
-      let updated =
-        deliverators_tracker
-        |> dict.insert(
-          deliverator_subject,
-          #(Idle, timestamp.system_time(), []),
-        )
+      let batch = sliced_queue |> list.take(up_to: constants.batch_size)
+      let rest = sliced_queue |> list.drop(up_to: constants.batch_size)
 
-      create_deliverators(updated, amount - 1)
+      batch_and_slice_queue_helper(
+        [batch, ..batches],
+        rest,
+        counter + 1,
+        available_deliverators_count,
+      )
     }
   }
+}
+
+fn batch_and_slice_queue(
+  package_queue: PackageQueue,
+  available_deliverators_count,
+) -> #(List(List(#(String, String))), PackageQueue) {
+  batch_and_slice_queue_helper(
+    [],
+    package_queue,
+    0,
+    available_deliverators_count,
+  )
 }
 
 fn handle_pool_message(
   state: DeliveratorPoolState,
   message: DeliveratorPoolMessage,
 ) {
-  // Dict(deliverator, #(status, deliverator start time, packages))
   let #(package_queue, deliverators_tracker) = state
 
   case message {
-    ReceivePackages(deliverator_pool_subject:, packages:) -> {
+    ReceivePackages(deliverator_pool_subject, packages) -> {
       // insert packages into queue
       let updated_queue =
         packages
@@ -141,33 +153,61 @@ fn handle_pool_message(
           acc |> list.append([package])
         })
 
-      let current_deliverators_count = dict.size(deliverators_tracker)
+      let available_deliverators =
+        deliverators_tracker
+        |> dict.fold(
+          from: [],
+          with: fn(acc, deliverator_subject, tracking_info) {
+            let #(status, restarts, packages) = tracking_info
+            case status, packages {
+              Idle, [] -> [#(deliverator_subject, restarts), ..acc]
+              _, _ -> acc
+            }
+          },
+        )
 
-      // check tracker to see if more deliverators can be started
-      case current_deliverators_count < max_pool_limit {
-        True -> {
-          // start few deliverators 
-          let new_deliverators_count =
-            max_pool_limit - current_deliverators_count
+      case available_deliverators {
+        // if all busy, add to queue and continue
+        [] -> actor.continue(#(updated_queue, deliverators_tracker))
 
-          let #(sliced_queue, updated_deliverators_tracker) =
-            create_deliverators(deliverators_tracker, new_deliverators_count)
-            |> send_message_and_update_tracker(
-              package_queue,
-              deliverator_pool_subject,
+        // else give available deliverators a batch of packages
+        availables -> {
+          let #(batches, sliced_queue) =
+            batch_and_slice_queue(updated_queue, list.length(availables))
+
+          let updated_deliverators_tracker =
+            availables
+            |> list.index_fold(
+              from: deliverators_tracker,
+              with: fn(acc, tuple, index) {
+                let #(deliverator_subject, restarts) = tuple
+
+                let batch =
+                  batches
+                  |> list.index_fold(from: [], with: fn(batch_acc, batch, idx) {
+                    case index == idx {
+                      True -> batch
+                      False -> batch_acc
+                    }
+                  })
+
+                send_to_deliverator(
+                  deliverator_subject,
+                  deliverator_pool_subject,
+                  batch,
+                )
+
+                acc
+                |> dict.insert(deliverator_subject, #(Busy, restarts, batch))
+              },
             )
 
           actor.continue(#(sliced_queue, updated_deliverators_tracker))
         }
-
-        // pool limit reached, wait for returning deliverators
-        False -> {
-          actor.continue(#(updated_queue, deliverators_tracker))
-        }
       }
     }
 
-    PackageDelivered(deliverator_subject:, delivered_package:) -> {
+    PackageDelivered(deliverator_subject, delivered_package) -> {
       let updated_deliverators_tracker =
         deliverators_tracker
         |> dict.upsert(
@@ -175,13 +215,13 @@ fn handle_pool_message(
           with: fn(tracking_info_maybe) {
             case tracking_info_maybe {
               option.None -> {
-                #(Busy, timestamp.system_time(), [])
+                #(Busy, 0, [])
               }
               option.Some(tracking_info) -> {
-                let #(status, deliverator_start_time, packages) = tracking_info
+                let #(status, restarts, packages) = tracking_info
                 #(
                   status,
-                  deliverator_start_time,
+                  restarts,
                   packages
                     |> list.filter(keeping: fn(package_in_tracker) {
                       package_in_tracker != delivered_package
@@ -195,23 +235,85 @@ fn handle_pool_message(
       actor.continue(#(package_queue, updated_deliverators_tracker))
     }
 
-    DeliveratorSuccess(deliverator_subject:, deliverator_pool_subject:) -> {
-      todo
+    DeliveratorSuccess(deliverator_subject, deliverator_pool_subject) -> {
+      // check if any packages need to be delivered
+      case package_queue {
+        // all packages currently assigned to deliverators
+        [] -> {
+          actor.continue(state)
+        }
+
+        // packages remain in queue
+        packages_to_deliver -> {
+          actor.continue(state)
+        }
+      }
     }
 
-    StopDeliverator(deliverator_subject:) -> {
+    DeliveratorRestart(deliverator_subject, deliverator_pool_subject) -> {
       todo
     }
   }
 }
 
-pub fn new_pool(name: process.Name(DeliveratorPoolMessage)) {
-  let state = #([], dict.new())
+pub fn new_pool(
+  name: process.Name(DeliveratorPoolMessage),
+  deliverator_names: List(process.Name(DeliveratorMessage)),
+) {
+  let deliverators_tracker =
+    deliverator_names
+    |> list.fold(from: dict.new(), with: fn(acc, deliverator_name) {
+      acc
+      |> dict.insert(process.named_subject(deliverator_name), #(Idle, 0, []))
+    })
+  let package_queue = []
+  let state = #(package_queue, deliverators_tracker)
 
   actor.new(state)
   |> actor.named(name)
   |> actor.on_message(handle_pool_message)
   |> actor.start
+}
+
+pub fn receive_packages(
+  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+  packages: List(#(String, String)),
+) {
+  actor.send(
+    deliverator_pool_subject,
+    ReceivePackages(deliverator_pool_subject, packages),
+  )
+}
+
+fn package_delivered(
+  deliverator_subject: process.Subject(DeliveratorMessage),
+  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+  delivered_package: #(String, String),
+) {
+  actor.send(
+    deliverator_pool_subject,
+    PackageDelivered(deliverator_subject, delivered_package),
+  )
+}
+
+pub fn deliverator_restart(
+  deliverator_subject: process.Subject(DeliveratorMessage),
+  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+) {
+  actor.send(
+    deliverator_pool_subject,
+    DeliveratorRestart(deliverator_subject, deliverator_pool_subject),
+  )
+}
+
+pub fn deliverator_success(
+  deliverator_subject: process.Subject(DeliveratorMessage),
+  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+) {
+  actor.send(
+    deliverator_pool_subject,
+    DeliveratorSuccess(deliverator_subject, deliverator_pool_subject),
+  )
 }
 
 // Deliverator
@@ -221,6 +323,8 @@ pub type DeliveratorMessage {
     deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
     packages: List(#(String, String)),
   )
+
+  StopDeliverator
 }
 
 fn maybe_crash() -> Nil {
@@ -250,7 +354,7 @@ fn deliver(
     [] -> Nil
     [package, ..rest] -> {
       make_delivery()
-      //   package_delivered(deliverator_pool_subject, package)
+      package_delivered(deliverator_subject, deliverator_pool_subject, package)
 
       let #(package_id, content) = package
       io.println(
@@ -274,17 +378,24 @@ fn handle_deliverator_message(
   case message {
     DeliverPackages(deliverator_subject, deliverator_pool_subject, packages) -> {
       deliver(deliverator_subject, deliverator_pool_subject, packages)
-      //   deliverator_success(deliverator_subject, deliverator_pool_subject)
+      deliverator_success(deliverator_subject, deliverator_pool_subject)
       actor.continue(state)
+    }
+
+    StopDeliverator -> {
+      actor.stop()
     }
   }
 }
 
-pub fn new_deliverator() -> Result(
+pub fn new_deliverator(
+  name: process.Name(DeliveratorMessage),
+) -> Result(
   actor.Started(process.Subject(DeliveratorMessage)),
   actor.StartError,
 ) {
   actor.new([])
+  |> actor.named(name)
   |> actor.on_message(handle_deliverator_message)
   |> actor.start
 }
@@ -312,4 +423,10 @@ fn send_to_deliverator(
     deliverator_subject,
     DeliverPackages(deliverator_subject, deliverator_pool_subject, packages),
   )
+}
+
+fn stop_deliverator(
+  deliverator_subject: process.Subject(DeliveratorMessage),
+) -> Nil {
+  actor.send(deliverator_subject, StopDeliverator)
 }
