@@ -144,6 +144,8 @@ fn handle_pool_message(
 
   case message {
     ReceivePackages(deliverator_pool_subject, packages) -> {
+      io.println("--ReceivePackages--")
+
       // insert packages into queue
       let updated_queue =
         packages
@@ -299,42 +301,80 @@ fn handle_pool_message(
           ))
 
         False -> {
-          // check if any packages remain in queue
-          case package_queue {
-            // queue empty
-            [] ->
-              // update tracker and continue
-              actor.continue(#(
-                [],
-                deliverators_tracker
-                  |> dict.insert(deliverator_subject, #(Idle, restarts + 1, [])),
-              ))
+          // find any remaining packages from previous incarnation
+          let remaining_packages =
+            deliverators_tracker
+            |> dict.fold(from: [], with: fn(acc, subject, tracking_info) {
+              let #(_status, _restarts, packages) = tracking_info
+              case subject == deliverator_subject {
+                True -> packages
+                False -> acc
+              }
+            })
 
-            packages_to_deliver -> {
-              // each restarted deliverator "pulls" a batch from the queue
-              let #(batches, sliced_queue) =
-                batch_and_slice_queue(packages_to_deliver, 1)
-              // list.take(1) does not narrow the return type
-              let batch =
-                batches
-                |> list.index_fold(from: [], with: fn(acc, batch, index) {
-                  case index == 0 {
-                    True -> batch
-                    False -> acc
-                  }
-                })
+          case remaining_packages {
+            // previous incarnation successfully delivered all assigned
+            [] -> {
+              // check if any packages in queue
+              case package_queue {
+                // queue is empty, all packages delivered
+                [] -> {
+                  actor.continue(#(
+                    [],
+                    deliverators_tracker
+                      |> dict.insert(deliverator_subject, #(Idle, restarts, [])),
+                  ))
+                }
 
-              let updated_deliverators_tracker =
-                deliverators_tracker
-                |> dict.insert(deliverator_subject, #(Busy, restarts + 1, []))
+                // packages in queue need to be delivered
+                packages_to_deliver -> {
+                  // each restarted deliverator "pulls" a batch from the queue
+                  let #(batches, sliced_queue) =
+                    batch_and_slice_queue(packages_to_deliver, 1)
 
+                  // list.take(1) does not narrow the return type
+                  let batch =
+                    batches
+                    |> list.index_fold(from: [], with: fn(acc, batch, index) {
+                      case index == 0 {
+                        True -> batch
+                        False -> acc
+                      }
+                    })
+
+                  let updated_deliverators_tracker =
+                    deliverators_tracker
+                    |> dict.insert(deliverator_subject, #(
+                      Busy,
+                      restarts + 1,
+                      batch,
+                    ))
+
+                  send_to_deliverator(
+                    deliverator_subject,
+                    deliverator_pool_subject,
+                    batch,
+                  )
+
+                  actor.continue(#(sliced_queue, updated_deliverators_tracker))
+                }
+              }
+            }
+
+            // previous incarnation did not deliver all assigned
+            remaining_packages -> {
+              // send remaining packages to deliverator to try again
               send_to_deliverator(
                 deliverator_subject,
                 deliverator_pool_subject,
-                batch,
+                remaining_packages,
               )
 
-              actor.continue(#(sliced_queue, updated_deliverators_tracker))
+              actor.continue(#(
+                package_queue,
+                deliverators_tracker
+                  |> dict.insert(deliverator_subject, #(Busy, restarts + 1, [])),
+              ))
             }
           }
         }
@@ -415,7 +455,7 @@ pub type DeliveratorMessage {
 fn maybe_crash() -> Nil {
   let crash_factor = int.random(100)
   io.println("Crash factor: " <> int.to_string(crash_factor))
-  case crash_factor > 90 {
+  case crash_factor > constants.crash_factor_limit {
     True -> {
       io.println("Uncle Enzo is not pleased... delivery deadline missed!")
       panic as "Panic! At The Warehouse"

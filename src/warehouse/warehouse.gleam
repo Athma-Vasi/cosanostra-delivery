@@ -13,7 +13,8 @@ pub fn start() -> Nil {
     |> static_supervisor.add(sup_spec)
     |> static_supervisor.start()
 
-  let random_batch = package.random_batch(100)
+  process.sleep(100)
+  let random_batch = package.random_batch(constants.random_packages_size)
   let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
   team.receive_packages(deliverator_pool_subject, random_batch)
 
