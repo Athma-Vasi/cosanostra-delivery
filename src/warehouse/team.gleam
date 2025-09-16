@@ -6,10 +6,7 @@ import gleam/io
 import gleam/list
 import gleam/option
 import gleam/otp/actor
-import gleam/result
 import gleam/string
-import gleam/time/duration
-import gleam/time/timestamp
 
 pub type DeliveratorPoolMessage {
   ReceivePackages(
@@ -235,17 +232,64 @@ fn handle_pool_message(
       actor.continue(#(package_queue, updated_deliverators_tracker))
     }
 
+    // all assigned packages (batch) have been delivered
     DeliveratorSuccess(deliverator_subject, deliverator_pool_subject) -> {
-      // check if any packages need to be delivered
+      // does any packages remain in queue
       case package_queue {
         // all packages currently assigned to deliverators
         [] -> {
-          actor.continue(state)
+          // update tracker and continue
+          let updated_deliverators_tracker =
+            deliverators_tracker
+            |> dict.upsert(
+              update: deliverator_subject,
+              with: fn(tracking_info_maybe) {
+                case tracking_info_maybe {
+                  option.None -> #(Idle, 0, [])
+
+                  option.Some(tracking_info) -> {
+                    let #(_status, restarts, _packages) = tracking_info
+                    #(Idle, restarts, [])
+                  }
+                }
+              },
+            )
+
+          actor.continue(#([], updated_deliverators_tracker))
         }
 
         // packages remain in queue
         packages_to_deliver -> {
-          actor.continue(state)
+          // each successful deliverator "pulls" a batch from the queue
+          let #(batches, sliced_queue) =
+            batch_and_slice_queue(packages_to_deliver, 1)
+          // list.take(1) does not narrow the return type
+          let batch =
+            batches
+            |> list.index_fold(from: [], with: fn(acc, batch, index) {
+              case index == 0 {
+                True -> batch
+                False -> acc
+              }
+            })
+
+          let updated_deliverators_tracker =
+            deliverators_tracker
+            |> dict.upsert(
+              update: deliverator_subject,
+              with: fn(tracking_info_maybe) {
+                case tracking_info_maybe {
+                  option.None -> #(Idle, 0, [])
+
+                  option.Some(tracking_info) -> {
+                    let #(_status, restarts, _packages) = tracking_info
+                    #(Busy, restarts, batch)
+                  }
+                }
+              },
+            )
+
+          actor.continue(#(sliced_queue, updated_deliverators_tracker))
         }
       }
     }
