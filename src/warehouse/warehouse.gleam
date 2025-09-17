@@ -1,13 +1,13 @@
 import constants
 import gleam/erlang/process
 import gleam/otp/static_supervisor
-import warehouse/director
 import warehouse/package
-import warehouse/team
+import warehouse/pool
+import warehouse/sup
 
 pub fn start() -> Nil {
   let deliverator_pool_name = process.new_name(constants.deliverator_pool)
-  let sup_spec = director.start_supervisor(deliverator_pool_name)
+  let sup_spec = sup.start_supervisor(deliverator_pool_name)
   let assert Ok(_overmind) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(sup_spec)
@@ -16,7 +16,7 @@ pub fn start() -> Nil {
   process.sleep(100)
   let random_batch = package.random_batch(constants.random_packages_size)
   let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
-  team.receive_packages(deliverator_pool_subject, random_batch)
+  pool.receive_packages(deliverator_pool_subject, random_batch)
 
   Nil
 }
