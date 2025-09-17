@@ -8,7 +8,7 @@ import gleam/option
 import gleam/otp/actor
 import gleam/result
 
-pub type DeliveratorPoolMessage {
+pub opaque type DeliveratorPoolMessage {
   ReceivePackages(
     deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
     packages: List(#(String, String)),
@@ -30,7 +30,7 @@ pub type DeliveratorPoolMessage {
   )
 }
 
-pub type DeliveratorStatus {
+pub opaque type DeliveratorStatus {
   Busy
   Idle
 }
@@ -381,7 +381,7 @@ pub fn deliverator_restart(
   )
 }
 
-pub fn deliverator_success(
+fn deliverator_success(
   deliverator_subject: process.Subject(DeliveratorMessage),
   deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
 ) {
@@ -392,7 +392,7 @@ pub fn deliverator_success(
 }
 
 // Deliverator
-pub type DeliveratorMessage {
+pub opaque type DeliveratorMessage {
   DeliverPackages(
     deliverator_subject: process.Subject(DeliveratorMessage),
     deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
@@ -474,7 +474,6 @@ fn send_to_deliverator(
   deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
   packages: List(#(String, String)),
 ) -> Nil {
-  // simulate work over time
   process.sleep(100)
 
   // io.println(
