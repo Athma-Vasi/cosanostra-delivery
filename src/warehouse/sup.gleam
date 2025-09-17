@@ -32,17 +32,16 @@ fn generate_deliverator_name(
   let names_pool = [
     "Hiro Protagonist", "Yours Truly", "Lagoon", "Ng", "Vitaly Chernobyl",
   ]
-  let length = list.length(names_pool)
-  let random_index = int.random(length)
-  let random_name =
-    names_pool
-    |> list.index_fold(from: "", with: fn(acc, name, index) {
-      case index == random_index {
-        True -> name <> int.to_string(max_pool_limit)
-        False -> acc
-      }
-    })
-  process.new_name(random_name)
+  let random_index = names_pool |> list.length |> int.random
+
+  names_pool
+  |> list.index_fold(from: "Da5id", with: fn(acc, name, index) {
+    case index == random_index {
+      True -> name <> int.to_string(max_pool_limit)
+      False -> acc
+    }
+  })
+  |> process.new_name
 }
 
 fn generate_deliverator_names(
