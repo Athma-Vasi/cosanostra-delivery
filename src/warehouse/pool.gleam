@@ -287,14 +287,14 @@ fn handle_pool_message(
     }
 
     DeliveratorRestart(deliverator_subject, deliverator_pool_subject) -> {
-      let #(_status, restarts, _packages) =
+      let #(_status, restarts, undelivered_packages) =
         deliverators_tracker
         |> dict.get(deliverator_subject)
         |> result.unwrap(or: #(Idle, 0, []))
 
-      case restarts == 0 {
-        // first incarnation
-        True ->
+      case restarts == 0, undelivered_packages {
+        // first incarnation of deliverator
+        True, [] | True, _undelivered ->
           // update tracker and continue
           actor.continue(#(
             package_queue,
@@ -302,75 +302,64 @@ fn handle_pool_message(
               |> dict.insert(deliverator_subject, #(Idle, restarts + 1, [])),
           ))
 
-        False -> {
-          // find any remaining packages from previous incarnation
-          let remaining_packages =
-            deliverators_tracker
-            |> dict.fold(from: [], with: fn(acc, subject, tracking_info) {
-              let #(_status, _restarts, packages) = tracking_info
-              case subject == deliverator_subject {
-                True -> packages
-                False -> acc
-              }
-            })
-
-          case remaining_packages {
-            // previous incarnation successfully delivered all assigned
+        // reincarnated with all assigned packages delivered
+        False, [] -> {
+          // check if any packages remain in queue
+          case package_queue {
+            // queue is empty, all packages delivered
             [] -> {
-              // check if any packages remain in queue
-              case package_queue {
-                // queue is empty, all packages delivered
-                [] -> {
-                  actor.continue(#(
-                    [],
-                    deliverators_tracker
-                      |> dict.insert(deliverator_subject, #(Idle, restarts, [])),
-                  ))
-                }
-
-                // packages in queue need to be delivered
-                packages_to_deliver -> {
-                  // each restarted deliverator "pulls" a batch from the queue
-                  let #(batches, sliced_queue) =
-                    batch_and_slice_queue(packages_to_deliver, 1)
-
-                  let batch = get_first(batches)
-
-                  send_to_deliverator(
-                    deliverator_subject,
-                    deliverator_pool_subject,
-                    batch,
-                  )
-
-                  actor.continue(#(
-                    sliced_queue,
-                    deliverators_tracker
-                      |> dict.insert(deliverator_subject, #(
-                        Busy,
-                        restarts + 1,
-                        batch,
-                      )),
-                  ))
-                }
-              }
+              actor.continue(#(
+                [],
+                deliverators_tracker
+                  |> dict.insert(deliverator_subject, #(Idle, restarts + 1, [])),
+              ))
             }
 
-            // previous incarnation did not deliver all assigned
-            remaining_packages -> {
-              // send remaining packages to deliverator to try again
+            // packages in queue need to be delivered
+            packages_in_queue -> {
+              // each restarted deliverator "pulls" a batch from the queue
+              let #(batches, sliced_queue) =
+                batch_and_slice_queue(packages_in_queue, 1)
+
+              let batch = get_first(batches)
+
               send_to_deliverator(
                 deliverator_subject,
                 deliverator_pool_subject,
-                remaining_packages,
+                batch,
               )
 
               actor.continue(#(
-                package_queue,
+                sliced_queue,
                 deliverators_tracker
-                  |> dict.insert(deliverator_subject, #(Busy, restarts + 1, [])),
+                  |> dict.insert(deliverator_subject, #(
+                    Busy,
+                    restarts + 1,
+                    batch,
+                  )),
               ))
             }
           }
+        }
+
+        // reincarnated with assigned packages undelivered 
+        False, undelivered -> {
+          // send remaining packages to deliverator to try again
+          send_to_deliverator(
+            deliverator_subject,
+            deliverator_pool_subject,
+            undelivered,
+          )
+
+          actor.continue(#(
+            package_queue,
+            deliverators_tracker
+              |> dict.insert(deliverator_subject, #(
+                Busy,
+                restarts + 1,
+                undelivered,
+              )),
+          ))
         }
       }
     }
