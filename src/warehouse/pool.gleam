@@ -146,6 +146,32 @@ fn get_first(items) {
   })
 }
 
+fn remove_delivered_package(
+  deliverators_tracker,
+  deliverator_subject,
+  delivered_package,
+) -> DeliveratorsTracker {
+  deliverators_tracker
+  |> dict.upsert(update: deliverator_subject, with: fn(tracking_info_maybe) {
+    case tracking_info_maybe {
+      option.None -> {
+        #(Busy, 0, [])
+      }
+      option.Some(tracking_info) -> {
+        let #(status, restarts, packages) = tracking_info
+        #(
+          status,
+          restarts,
+          packages
+            |> list.filter(keeping: fn(package_in_tracker) {
+              package_in_tracker != delivered_package
+            }),
+        )
+      }
+    }
+  })
+}
+
 fn handle_pool_message(
   state: DeliveratorPoolState,
   message: DeliveratorPoolMessage,
@@ -217,33 +243,15 @@ fn handle_pool_message(
       }
     }
 
-    PackageDelivered(deliverator_subject, delivered_package) -> {
-      let updated_deliverators_tracker =
-        deliverators_tracker
-        |> dict.upsert(
-          update: deliverator_subject,
-          with: fn(tracking_info_maybe) {
-            case tracking_info_maybe {
-              option.None -> {
-                #(Busy, 0, [])
-              }
-              option.Some(tracking_info) -> {
-                let #(status, restarts, packages) = tracking_info
-                #(
-                  status,
-                  restarts,
-                  packages
-                    |> list.filter(keeping: fn(package_in_tracker) {
-                      package_in_tracker != delivered_package
-                    }),
-                )
-              }
-            }
-          },
-        )
-
-      actor.continue(#(package_queue, updated_deliverators_tracker))
-    }
+    PackageDelivered(deliverator_subject, delivered_package) ->
+      actor.continue(#(
+        package_queue,
+        remove_delivered_package(
+          deliverators_tracker,
+          deliverator_subject,
+          delivered_package,
+        ),
+      ))
 
     // all assigned packages (batch) to this deliverator have been delivered
     DeliveratorSuccess(deliverator_subject, deliverator_pool_subject) -> {
