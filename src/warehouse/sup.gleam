@@ -20,7 +20,7 @@ fn generate_receiver_name(max_pool_limit) {
   let random_index = names_pool |> list.length |> int.random
 
   names_pool
-  |> list.index_fold(from: "Uncle Enzo", with: fn(acc, name, index) {
+  |> list.index_fold(from: "Juanita", with: fn(acc, name, index) {
     case index == random_index {
       True -> name <> int.to_string(max_pool_limit)
       False -> acc

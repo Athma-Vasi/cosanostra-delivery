@@ -15,15 +15,29 @@ type Package =
 type PackageQueue =
   List(Package)
 
+type ReceiverPoolSubject =
+  process.Subject(ReceiverPoolMessage)
+
+type ReceiverSubject =
+  process.Subject(ReceiverMessage)
+
 pub opaque type ReceiverPoolMessage {
   ReceivePackages(
-    receiver_pool_subject: process.Subject(ReceiverPoolMessage),
+    receiver_pool_subject: ReceiverPoolSubject,
     packages: List(Package),
   )
 
-  ReceiverSuccess
+  PathFound(receiver_subject: ReceiverSubject, packages: List(Package))
 
-  ReceiverRestart
+  ReceiverSuccess(
+    receiver_subject: ReceiverSubject,
+    receiver_pool_subject: ReceiverPoolSubject,
+  )
+
+  ReceiverRestart(
+    receiver_subject: ReceiverSubject,
+    receiver_pool_subject: ReceiverPoolSubject,
+  )
 }
 
 pub opaque type ReceiverState {
@@ -31,15 +45,42 @@ pub opaque type ReceiverState {
   Idle
 }
 
+type ReceiversTracker =
+  dict.Dict(ReceiverSubject, ReceiverState)
+
+type UnorderedPackages =
+  List(Int)
+
+type OrderedPackages =
+  List(Int)
+
+type Distance =
+  Int
+
+type MemoizedPaths =
+  dict.Dict(UnorderedPackages, #(OrderedPackages, Distance))
+
 type ReceiverPoolState =
-  #(
-    PackageQueue,
-    dict.Dict(process.Subject(ReceiverMessage), ReceiverState),
-    dict.Dict(List(Int), List(Int)),
-  )
+  #(PackageQueue, ReceiversTracker, MemoizedPaths)
 
 fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
-  todo
+  case message {
+    ReceivePackages(receiver_pool_subject, packages) -> {
+      todo
+    }
+
+    PathFound(receiver_subject, packages) -> {
+      todo
+    }
+
+    ReceiverSuccess(receiver_subject, receiver_pool_subject) -> {
+      todo
+    }
+
+    ReceiverRestart(receiver_subject, receiver_pool_subject) -> {
+      todo
+    }
+  }
 }
 
 pub fn new_pool(
@@ -62,11 +103,23 @@ pub fn new_pool(
 }
 
 pub opaque type ReceiverMessage {
-  CalculateShortestPath
+  CalculateShortestPath(
+    receiver_subject: ReceiverPoolSubject,
+    receiver_pool_subject: ReceiverPoolSubject,
+    packages: List(Package),
+  )
+}
+
+fn generate_paths_permutations(packages) {
+  todo
 }
 
 fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
-  todo
+  case message {
+    CalculateShortestPath(receiver_subject, receiver_pool_subject, packages) -> {
+      todo
+    }
+  }
 }
 
 pub fn new_receiver(name: process.Name(ReceiverMessage)) {
