@@ -7,7 +7,8 @@ import warehouse/sup
 
 pub fn start() -> Nil {
   let deliverator_pool_name = process.new_name(constants.deliverator_pool)
-  let sup_spec = sup.start_supervisor(deliverator_pool_name)
+  let receiver_pool_name = process.new_name(constants.receiver_pool)
+  let sup_spec = sup.start_supervisor(receiver_pool_name, deliverator_pool_name)
   let assert Ok(_overmind) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(sup_spec)
