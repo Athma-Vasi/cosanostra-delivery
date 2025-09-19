@@ -11,6 +11,9 @@ const radius = 6371.0
 
 const timeout = 5000
 
+pub type NavigatorSubject =
+  process.Subject(NavigatorMessage)
+
 pub type NavigatorMessage {
   GetDistance(
     reply_with: process.Subject(Float),

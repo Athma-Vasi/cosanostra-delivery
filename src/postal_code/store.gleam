@@ -6,6 +6,9 @@ import postal_code/data_parser
 
 const timeout = 5000
 
+pub type CoordinateStoreSubject =
+  process.Subject(StoreMessage)
+
 pub opaque type StoreMessage {
   GetCoordinates(reply_with: process.Subject(#(Float, Float)), geoid: Int)
   GetGeoids(reply_with: process.Subject(List(Int)))

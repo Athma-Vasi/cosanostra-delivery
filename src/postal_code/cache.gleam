@@ -5,6 +5,9 @@ import gleam/result
 
 const timeout = 5000
 
+pub type CoordinatesCacheSubject =
+  process.Subject(CacheMessage)
+
 pub type CacheMessage {
   SetDistance(distance: Float, from: Int, to: Int)
   GetDistance(reply_with: process.Subject(Float), from: Int, to: Int)
