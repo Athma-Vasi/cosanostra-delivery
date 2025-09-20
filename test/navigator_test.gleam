@@ -1,26 +1,27 @@
 import gleam/erlang/process
-import postal_code/cache
-import postal_code/navigator
-import postal_code/store
+import navigator/coordinates_store
+import navigator/distances_cache
+import navigator/navigator
 
 pub fn navigator_test() {
   let navigator_name = process.new_name("navigator")
   let navigator_subject = process.named_subject(navigator_name)
   let assert Ok(_navigator) = navigator.new(navigator_name)
-  let store_name = process.new_name("parser_store")
-  let assert Ok(_store) = store.new(store_name)
-  let store_subject = process.named_subject(store_name)
-  let cache_name = process.new_name("cache")
-  let cache_subject = process.named_subject(cache_name)
-  let assert Ok(_cache) = cache.new(cache_name)
+  let coordinates_store_name = process.new_name("parser_coordinates_store")
+  let assert Ok(_coordinates_store) =
+    coordinates_store.new(coordinates_store_name)
+  let coordinates_store_subject = process.named_subject(coordinates_store_name)
+  let distances_cache_name = process.new_name("distances_cache")
+  let distances_cache_subject = process.named_subject(distances_cache_name)
+  let assert Ok(_distances_cache) = distances_cache.new(distances_cache_name)
 
   let distance =
     navigator.get_distance(
       navigator_subject,
       56_001_962_700,
       56_001_962_800,
-      store_subject,
-      cache_subject,
+      coordinates_store_subject,
+      distances_cache_subject,
     )
 
   assert distance == 2.17

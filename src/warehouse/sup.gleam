@@ -4,7 +4,7 @@ import gleam/int
 import gleam/list
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
-import warehouse/pool
+import warehouse/deliverator
 import warehouse/receiver
 
 // --receiver--
@@ -108,16 +108,16 @@ fn start_receivers(
 // --deliverators--
 
 type DeliveratorPoolName =
-  process.Name(pool.DeliveratorPoolMessage)
+  process.Name(deliverator.DeliveratorPoolMessage)
 
 type DeliveratorName =
-  process.Name(pool.DeliveratorMessage)
+  process.Name(deliverator.DeliveratorMessage)
 
 fn start_deliverator_pool(
   deliverator_pool_name: DeliveratorPoolName,
   deliverator_names: List(DeliveratorName),
 ) {
-  fn() { pool.new_pool(deliverator_pool_name, deliverator_names) }
+  fn() { deliverator.new_pool(deliverator_pool_name, deliverator_names) }
 }
 
 fn start_deliverator(
@@ -128,8 +128,11 @@ fn start_deliverator(
     let deliverator_subject = process.named_subject(deliverator_name)
     let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
 
-    pool.deliverator_restart(deliverator_subject, deliverator_pool_subject)
-    pool.new_deliverator(deliverator_name)
+    deliverator.deliverator_restart(
+      deliverator_subject,
+      deliverator_pool_subject,
+    )
+    deliverator.new_deliverator(deliverator_name)
   }
 }
 

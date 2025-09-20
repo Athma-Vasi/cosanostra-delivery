@@ -2,7 +2,7 @@ import gleam/dict
 import gleam/erlang/process
 import gleam/otp/actor
 import gleam/result
-import postal_code/data_parser
+import navigator/gazetteer_parser
 
 const timeout = 5000
 
@@ -32,7 +32,7 @@ fn handle_message(state: dict.Dict(Int, #(Float, Float)), message: StoreMessage)
 }
 
 pub fn new(name: process.Name(StoreMessage)) {
-  let state = data_parser.new() |> data_parser.parse
+  let state = gazetteer_parser.new() |> gazetteer_parser.parse
 
   actor.new(state)
   |> actor.on_message(handle_message)

@@ -78,7 +78,7 @@ fn remove_delivered_packet(
 
       option.Some(tracking_info) -> {
         let #(status, restarts, packets, distance_so_far) = tracking_info
-        let #(geoid, _packet, distance_this_delivery) = delivered_packet
+        let #(_geoid, _packet, distance_this_delivery) = delivered_packet
         let filtered =
           packets
           |> list.filter(keeping: fn(packet_in_tracker) {

@@ -2,7 +2,6 @@ import constants
 import gleam/erlang/process
 import gleam/otp/static_supervisor
 import warehouse/package
-import warehouse/pool
 import warehouse/receiver
 import warehouse/sup
 

@@ -5,7 +5,7 @@ import gleam/result
 
 const timeout = 5000
 
-pub type CoordinatesCacheSubject =
+pub type DistancesCacheSubject =
   process.Subject(CacheMessage)
 
 pub type CacheMessage {

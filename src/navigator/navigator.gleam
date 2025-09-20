@@ -3,8 +3,8 @@ import gleam/float
 import gleam/otp/actor
 import gleam/result
 import gleam_community/maths
-import postal_code/cache
-import postal_code/store
+import navigator/coordinates_store
+import navigator/distances_cache
 
 // km of great circle (Terra)
 const radius = 6371.0
@@ -19,8 +19,8 @@ pub type NavigatorMessage {
     reply_with: process.Subject(Float),
     from: Int,
     to: Int,
-    store_subject: process.Subject(store.StoreMessage),
-    cache_subject: process.Subject(cache.CacheMessage),
+    store_subject: coordinates_store.CoordinateStoreSubject,
+    cache_subject: distances_cache.DistancesCacheSubject,
   )
 }
 
@@ -59,10 +59,12 @@ fn handle_message(
 ) -> actor.Next(List(Nil), a) {
   case message {
     GetDistance(client, from, to, store_subject, cache_subject) -> {
-      let distance = case cache.get_distance(cache_subject, from, to) {
+      let distance = case
+        distances_cache.get_distance(cache_subject, from, to)
+      {
         0.0 -> {
-          let here = store.get_coordinates(store_subject, from)
-          let there = store.get_coordinates(store_subject, to)
+          let here = coordinates_store.get_coordinates(store_subject, from)
+          let there = coordinates_store.get_coordinates(store_subject, to)
           calculate_distance(here, there)
         }
         dist -> dist
@@ -87,8 +89,8 @@ pub fn get_distance(
   subject: process.Subject(NavigatorMessage),
   from: Int,
   to: Int,
-  store_subject: process.Subject(store.StoreMessage),
-  cache_subject: process.Subject(cache.CacheMessage),
+  store_subject: coordinates_store.CoordinateStoreSubject,
+  cache_subject: distances_cache.DistancesCacheSubject,
 ) -> Float {
   actor.call(subject, timeout, GetDistance(
     _,
