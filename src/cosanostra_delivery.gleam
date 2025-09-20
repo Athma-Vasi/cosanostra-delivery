@@ -1,7 +1,8 @@
+import app
 import gleam/erlang/process
-import warehouse/warehouse
 
 pub fn main() -> Nil {
-  warehouse.start()
+  let assert Ok(_application) = app.start()
+  echo "APP STARTED"
   process.sleep_forever()
 }

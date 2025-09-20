@@ -30,6 +30,6 @@ pub fn start_supervisor(
   |> static_supervisor.add(
     supervision.worker(start_distances_cache(distances_cache_name)),
   )
-  |> static_supervisor.restart_tolerance(intensity: 3, period: 1000)
+  |> static_supervisor.restart_tolerance(intensity: 10, period: 1000)
   |> static_supervisor.supervised()
 }
