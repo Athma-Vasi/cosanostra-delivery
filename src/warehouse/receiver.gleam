@@ -31,6 +31,9 @@ pub type ReceiverPoolSubject =
 pub type ReceiverSubject =
   process.Subject(ReceiverMessage)
 
+type DeliveratorShipment =
+  List(#(GeoId, Parcel, Distance))
+
 pub opaque type ReceiverPoolMessage {
   ReceivePackages(
     receiver_pool_subject: ReceiverPoolSubject,
@@ -648,9 +651,6 @@ fn find_shortest_distance_path(
     }
   })
 }
-
-type DeliveratorShipment =
-  List(#(GeoId, Parcel, Distance))
 
 fn create_deliverator_shipment(
   geoid_pair_distances: List(#(#(GeoId, GeoId), Distance)),

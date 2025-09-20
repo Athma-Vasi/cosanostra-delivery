@@ -7,26 +7,33 @@ import gleam/list
 import gleam/option
 import gleam/otp/actor
 import gleam/result
+import warehouse/utils
+
+type DeliveratorPoolSubject =
+  process.Subject(DeliveratorPoolMessage)
+
+type DeliveratorSubject =
+  process.Subject(DeliveratorMessage)
 
 pub opaque type DeliveratorPoolMessage {
   ReceivePackages(
-    deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
-    packages: List(#(String, String)),
+    deliverator_pool_subject: DeliveratorPoolSubject,
+    packages: List(Package),
   )
 
   PackageDelivered(
-    deliverator_subject: process.Subject(DeliveratorMessage),
-    delivered_package: #(String, String),
+    deliverator_subject: DeliveratorSubject,
+    delivered_package: Package,
   )
 
   DeliveratorSuccess(
-    deliverator_subject: process.Subject(DeliveratorMessage),
-    deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+    deliverator_subject: DeliveratorSubject,
+    deliverator_pool_subject: DeliveratorPoolSubject,
   )
 
   DeliveratorRestart(
-    deliverator_subject: process.Subject(DeliveratorMessage),
-    deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+    deliverator_subject: DeliveratorSubject,
+    deliverator_pool_subject: DeliveratorPoolSubject,
   )
 }
 
@@ -36,61 +43,28 @@ pub opaque type DeliveratorStatus {
 }
 
 type DeliveratorsTracker =
-  dict.Dict(
-    process.Subject(DeliveratorMessage),
-    #(DeliveratorStatus, Int, List(#(String, String))),
-  )
+  dict.Dict(DeliveratorSubject, #(DeliveratorStatus, Int, List(Package)))
+
+type Parcel =
+  #(String, String)
+
+type GeoId =
+  Int
+
+type Package =
+  #(GeoId, Parcel)
 
 type PackageQueue =
-  List(#(String, String))
+  List(Package)
+
+type Distance =
+  Float
+
+type DeliveratorShipment =
+  List(#(GeoId, Parcel, Distance))
 
 type DeliveratorPoolState =
   #(PackageQueue, DeliveratorsTracker)
-
-fn batch_and_slice_queue_helper(
-  batches: List(List(#(String, String))),
-  sliced_queue: PackageQueue,
-  counter,
-  available_deliverators_count,
-) {
-  case counter == available_deliverators_count {
-    True -> #(batches, sliced_queue)
-
-    False -> {
-      let batch = sliced_queue |> list.take(up_to: constants.batch_size)
-      let rest = sliced_queue |> list.drop(up_to: constants.batch_size)
-
-      batch_and_slice_queue_helper(
-        [batch, ..batches],
-        rest,
-        counter + 1,
-        available_deliverators_count,
-      )
-    }
-  }
-}
-
-fn batch_and_slice_queue(
-  package_queue: PackageQueue,
-  available_deliverators_count,
-) -> #(List(List(#(String, String))), PackageQueue) {
-  batch_and_slice_queue_helper(
-    [],
-    package_queue,
-    0,
-    available_deliverators_count,
-  )
-}
-
-fn get_first_batch(items) {
-  items
-  |> list.index_fold(from: [], with: fn(acc, item, idx) {
-    case idx == 0 {
-      True -> item
-      False -> acc
-    }
-  })
-}
 
 fn remove_delivered_package(
   deliverators_tracker,
@@ -118,7 +92,7 @@ fn remove_delivered_package(
 
 fn find_available_deliverators(
   deliverators_tracker,
-) -> List(#(process.Subject(DeliveratorMessage), Int)) {
+) -> List(#(DeliveratorSubject, Int)) {
   deliverators_tracker
   |> dict.fold(from: [], with: fn(acc, deliverator_subject, tracking_info) {
     let #(status, restarts, packages) = tracking_info
@@ -132,9 +106,9 @@ fn find_available_deliverators(
 
 fn send_batches_to_available_deliverators(
   updated_deliverators_tracker: DeliveratorsTracker,
-  available_deliverators: List(#(process.Subject(DeliveratorMessage), Int)),
-  batches: List(List(#(String, String))),
-  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+  available_deliverators: List(#(DeliveratorSubject, Int)),
+  batches: List(List(Package)),
+  deliverator_pool_subject: DeliveratorPoolSubject,
 ) {
   case available_deliverators, batches {
     [], [] | [], _batches | _available, [] -> updated_deliverators_tracker
@@ -179,7 +153,7 @@ fn handle_pool_message(
         // else "push" available deliverators a batch of packages
         availables -> {
           let #(batches, sliced_queue) =
-            batch_and_slice_queue(updated_queue, list.length(availables))
+            utils.batch_and_slice_queue(updated_queue, list.length(availables))
 
           actor.continue(#(
             sliced_queue,
@@ -243,8 +217,8 @@ fn handle_pool_message(
         packages_to_deliver -> {
           // each successful deliverator "pulls" a batch from the queue
           let #(batches, sliced_queue) =
-            batch_and_slice_queue(packages_to_deliver, 1)
-          let batch = get_first_batch(batches)
+            utils.batch_and_slice_queue(packages_to_deliver, 1)
+          let batch = utils.get_first_batch(batches)
           send_to_deliverator(
             deliverator_subject,
             deliverator_pool_subject,
@@ -291,8 +265,8 @@ fn handle_pool_message(
             packages_in_queue -> {
               // each reincarnated deliverator "pulls" a batch from the queue
               let #(batches, sliced_queue) =
-                batch_and_slice_queue(packages_in_queue, 1)
-              let batch = get_first_batch(batches)
+                utils.batch_and_slice_queue(packages_in_queue, 1)
+              let batch = utils.get_first_batch(batches)
               send_to_deliverator(
                 deliverator_subject,
                 deliverator_pool_subject,
@@ -351,8 +325,8 @@ pub fn new_pool(
 }
 
 pub fn receive_packages(
-  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
-  packages: List(#(String, String)),
+  deliverator_pool_subject: DeliveratorPoolSubject,
+  packages: List(Package),
 ) {
   actor.send(
     deliverator_pool_subject,
@@ -361,9 +335,9 @@ pub fn receive_packages(
 }
 
 fn package_delivered(
-  deliverator_subject: process.Subject(DeliveratorMessage),
-  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
-  delivered_package: #(String, String),
+  deliverator_subject: DeliveratorSubject,
+  deliverator_pool_subject: DeliveratorPoolSubject,
+  delivered_package: Package,
 ) {
   actor.send(
     deliverator_pool_subject,
@@ -372,8 +346,8 @@ fn package_delivered(
 }
 
 pub fn deliverator_restart(
-  deliverator_subject: process.Subject(DeliveratorMessage),
-  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+  deliverator_subject: DeliveratorSubject,
+  deliverator_pool_subject: DeliveratorPoolSubject,
 ) {
   actor.send(
     deliverator_pool_subject,
@@ -382,8 +356,8 @@ pub fn deliverator_restart(
 }
 
 fn deliverator_success(
-  deliverator_subject: process.Subject(DeliveratorMessage),
-  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
+  deliverator_subject: DeliveratorSubject,
+  deliverator_pool_subject: DeliveratorPoolSubject,
 ) {
   actor.send(
     deliverator_pool_subject,
@@ -394,9 +368,9 @@ fn deliverator_success(
 // Deliverator
 pub opaque type DeliveratorMessage {
   DeliverPackages(
-    deliverator_subject: process.Subject(DeliveratorMessage),
-    deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
-    packages: List(#(String, String)),
+    deliverator_subject: DeliveratorSubject,
+    deliverator_pool_subject: DeliveratorPoolSubject,
+    packages: List(Package),
   )
 }
 
@@ -419,9 +393,9 @@ fn make_delivery() -> Nil {
 }
 
 fn deliver(
-  deliverator_subject: process.Subject(DeliveratorMessage),
-  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
-  packages: List(#(String, String)),
+  deliverator_subject: DeliveratorSubject,
+  deliverator_pool_subject: DeliveratorPoolSubject,
+  packages: List(Package),
 ) -> Nil {
   case packages {
     [] -> Nil
@@ -459,10 +433,7 @@ fn handle_deliverator_message(
 
 pub fn new_deliverator(
   name: process.Name(DeliveratorMessage),
-) -> Result(
-  actor.Started(process.Subject(DeliveratorMessage)),
-  actor.StartError,
-) {
+) -> Result(actor.Started(DeliveratorSubject), actor.StartError) {
   actor.new([])
   |> actor.named(name)
   |> actor.on_message(handle_deliverator_message)
@@ -470,9 +441,9 @@ pub fn new_deliverator(
 }
 
 fn send_to_deliverator(
-  deliverator_subject: process.Subject(DeliveratorMessage),
-  deliverator_pool_subject: process.Subject(DeliveratorPoolMessage),
-  packages: List(#(String, String)),
+  deliverator_subject: DeliveratorSubject,
+  deliverator_pool_subject: DeliveratorPoolSubject,
+  packages: List(Package),
 ) -> Nil {
   process.sleep(100)
 
