@@ -289,7 +289,7 @@ fn handle_pool_message(
 
             // packages in queue need to be delivered
             packages_in_queue -> {
-              // each restarted deliverator "pulls" a batch from the queue
+              // each reincarnated deliverator "pulls" a batch from the queue
               let #(batches, sliced_queue) =
                 batch_and_slice_queue(packages_in_queue, 1)
               let batch = get_first_batch(batches)

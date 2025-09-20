@@ -30,3 +30,13 @@ pub fn batch_and_slice_queue(
 ) -> #(List(List(items)), List(items)) {
   batch_and_slice_queue_helper([], package_queue, 0, available_actors_count)
 }
+
+pub fn get_first_batch(items) {
+  items
+  |> list.index_fold(from: [], with: fn(acc, item, idx) {
+    case idx == 0 {
+      True -> item
+      False -> acc
+    }
+  })
+}

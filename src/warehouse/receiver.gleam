@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/float
 import gleam/int
 import gleam/list
+import gleam/option
 import gleam/otp/actor
 import gleam/result
 import postal_code/cache
@@ -42,13 +43,21 @@ pub opaque type ReceiverPoolMessage {
 
   PathComputedSuccess(
     receiver_subject: ReceiverSubject,
+    receiver_pool_subject: ReceiverPoolSubject,
     deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
+    coordinates_store_subject: store.CoordinateStoreSubject,
+    coordinates_cache_subject: cache.CoordinatesCacheSubject,
+    navigator_subject: navigator.NavigatorSubject,
     deliverator_shipment: DeliveratorShipment,
   )
 
   ReceiverRestart(
     receiver_subject: ReceiverSubject,
     receiver_pool_subject: ReceiverPoolSubject,
+    deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
+    coordinates_store_subject: store.CoordinateStoreSubject,
+    coordinates_cache_subject: cache.CoordinatesCacheSubject,
+    navigator_subject: navigator.NavigatorSubject,
   )
 }
 
@@ -107,14 +116,13 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
           list.length(available_receivers),
         )
 
-      // check each batch's geoids to see if we have already computed
-      // the shortest distance path
+      // check each batch's geoids to see if memoized path exists
       let #(not_computed_batches, deliverator_shipment) =
         batches
         |> list.fold(from: #([], []), with: fn(acc, batch) {
           let #(not_computed_batches, computed_batches) = acc
 
-          // table for later threading
+          // table required for later correct parcel insertion
           let #(geoids, geoid_parcel_table) =
             batch
             |> list.fold(
@@ -185,7 +193,7 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
               let #(not_computed_batch, available) = zipped
               let #(receiver_subject, restarts) = available
 
-              send_to_receiver(
+              calculate_shortest_path(
                 receiver_subject,
                 receiver_pool_subject,
                 coordinates_store_subject,
@@ -214,18 +222,13 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
 
     PathComputedSuccess(
       receiver_subject,
+      receiver_pool_subject,
       deliverator_pool_subject,
+      coordinates_store_subject,
+      coordinates_cache_subject,
+      navigator_subject,
       deliverator_shipment,
     ) -> {
-      let #(_status, restarts, _batch) =
-        receivers_tracker
-        |> dict.get(receiver_subject)
-        |> result.unwrap(#(Idle, 0, []))
-
-      let updated_receivers_tracker =
-        receivers_tracker
-        |> dict.insert(receiver_subject, #(Idle, restarts, []))
-
       // grab geoids to insert new shortest path with distances
       let #(geoids, path_with_distances) =
         deliverator_shipment
@@ -236,6 +239,7 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
           #([geoid, ..geoids], [#(geoid, distance), ..path_with_distances])
         })
 
+      // memo table keys are sorted asc set 
       let sorted_asc_geoids =
         geoids
         |> list.sort(by: fn(geoid1, geoid2) { int.compare(geoid1, geoid2) })
@@ -244,17 +248,185 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
         memoized_shortest_distances_paths
         |> dict.insert(sorted_asc_geoids, path_with_distances)
 
+      // send ordered packages to deliverator pool for delivery
       pool.receive_packages(deliverator_pool_subject, [])
 
-      actor.continue(#(
-        package_queue,
-        updated_receivers_tracker,
-        updated_memo_table,
-      ))
+      // check if any packages remain to be delivered in queue 
+      case package_queue {
+        // all packages sent to deliverator pool
+        [] -> {
+          let updated_receivers_tracker =
+            receivers_tracker
+            |> dict.upsert(
+              update: receiver_subject,
+              with: fn(tracking_info_maybe) {
+                case tracking_info_maybe {
+                  option.None -> #(Idle, 0, [])
+
+                  option.Some(tracking_info) -> {
+                    let #(_status, restarts, _batch) = tracking_info
+                    #(Idle, restarts, [])
+                  }
+                }
+              },
+            )
+
+          actor.continue(#([], updated_receivers_tracker, updated_memo_table))
+        }
+
+        // packages require computin'
+        package_queue -> {
+          // each successfull receiver "pulls" a batch from queue
+          let #(batches, sliced_queue) =
+            utils.batch_and_slice_queue(package_queue, 1)
+          let batch = utils.get_first_batch(batches)
+
+          // update status and batch for retry if receiver fails to compute
+          let updated_receivers_tracker =
+            receivers_tracker
+            |> dict.upsert(
+              update: receiver_subject,
+              with: fn(tracking_info_maybe) {
+                case tracking_info_maybe {
+                  option.None -> #(Idle, 0, [])
+
+                  option.Some(tracking_info) -> {
+                    let #(_status, restarts, _batch) = tracking_info
+                    #(Busy, restarts, batch)
+                  }
+                }
+              },
+            )
+
+          calculate_shortest_path(
+            receiver_subject,
+            receiver_pool_subject,
+            coordinates_store_subject,
+            coordinates_cache_subject,
+            navigator_subject,
+            deliverator_pool_subject,
+            batch,
+          )
+
+          actor.continue(#(
+            sliced_queue,
+            updated_receivers_tracker,
+            updated_memo_table,
+          ))
+        }
+      }
     }
 
-    ReceiverRestart(receiver_subject, receiver_pool_subject) -> {
-      actor.continue(state)
+    ReceiverRestart(
+      receiver_subject,
+      receiver_pool_subject,
+      deliverator_pool_subject,
+      coordinates_store_subject,
+      coordinates_cache_subject,
+      navigator_subject,
+    ) -> {
+      let #(_status, restarts, not_computed_batch) =
+        receivers_tracker
+        |> dict.get(receiver_subject)
+        |> result.unwrap(or: #(Idle, 0, []))
+
+      case restarts == 0, not_computed_batch {
+        // first incarnation of receiver
+        True, [] | True, _not_computed_batch ->
+          // update tracker and continue
+
+          actor.continue(#(
+            package_queue,
+            receivers_tracker
+              |> dict.insert(receiver_subject, #(Idle, restarts + 1, [])),
+            memoized_shortest_distances_paths,
+          ))
+
+        // reincarnated with assigned batch computed
+        False, [] -> {
+          // check if any packages in queue needs computin'
+          case package_queue {
+            // all batches assigned to receivers
+            [] ->
+              // update tracker and continue
+              actor.continue(#(
+                package_queue,
+                receivers_tracker
+                  |> dict.insert(receiver_subject, #(Idle, restarts + 1, [])),
+                memoized_shortest_distances_paths,
+              ))
+
+            // packages in queue needs computin'
+            package_queue -> {
+              // each reincarnated receiver "pulls" a batch from queue
+              let #(batches, sliced_queue) =
+                utils.batch_and_slice_queue(package_queue, 1)
+              let batch = utils.get_first_batch(batches)
+
+              // update status and batch for retry if receiver fails to compute
+              let updated_receivers_tracker =
+                receivers_tracker
+                |> dict.upsert(
+                  update: receiver_subject,
+                  with: fn(tracking_info_maybe) {
+                    case tracking_info_maybe {
+                      option.None -> #(Idle, 0, [])
+
+                      option.Some(tracking_info) -> {
+                        let #(_status, restarts, _batch) = tracking_info
+                        #(Busy, restarts, batch)
+                      }
+                    }
+                  },
+                )
+
+              calculate_shortest_path(
+                receiver_subject,
+                receiver_pool_subject,
+                coordinates_store_subject,
+                coordinates_cache_subject,
+                navigator_subject,
+                deliverator_pool_subject,
+                batch,
+              )
+
+              actor.continue(#(
+                sliced_queue,
+                updated_receivers_tracker,
+                memoized_shortest_distances_paths,
+              ))
+            }
+          }
+        }
+
+        // reincarnated with assigned batch not computed
+        False, not_computed_batch -> {
+          let updated_receivers_tracker =
+            receivers_tracker
+            |> dict.insert(receiver_subject, #(
+              Busy,
+              restarts + 1,
+              not_computed_batch,
+            ))
+
+          // send remaining batch to try again
+          calculate_shortest_path(
+            receiver_subject,
+            receiver_pool_subject,
+            coordinates_store_subject,
+            coordinates_cache_subject,
+            navigator_subject,
+            deliverator_pool_subject,
+            not_computed_batch,
+          )
+
+          actor.continue(#(
+            package_queue,
+            updated_receivers_tracker,
+            memoized_shortest_distances_paths,
+          ))
+        }
+      }
     }
   }
 }
@@ -282,29 +454,68 @@ pub fn new_pool(
   |> actor.start
 }
 
+pub fn receive_packages(
+  receiver_pool_subject: ReceiverPoolSubject,
+  deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
+  coordinates_store_subject: store.CoordinateStoreSubject,
+  coordinates_cache_subject: cache.CoordinatesCacheSubject,
+  navigator_subject: navigator.NavigatorSubject,
+  packages: List(Package),
+) {
+  actor.send(
+    receiver_pool_subject,
+    ReceivePackages(
+      receiver_pool_subject,
+      deliverator_pool_subject,
+      coordinates_store_subject,
+      coordinates_cache_subject,
+      navigator_subject,
+      packages,
+    ),
+  )
+}
+
 fn path_computed_success(
   receiver_subject: ReceiverSubject,
   receiver_pool_subject: ReceiverPoolSubject,
   deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
+  coordinates_store_subject: store.CoordinateStoreSubject,
+  coordinates_cache_subject: cache.CoordinatesCacheSubject,
+  navigator_subject: navigator.NavigatorSubject,
   deliverator_shipment: DeliveratorShipment,
 ) {
   actor.send(
     receiver_pool_subject,
     PathComputedSuccess(
       receiver_subject,
+      receiver_pool_subject,
       deliverator_pool_subject,
+      coordinates_store_subject,
+      coordinates_cache_subject,
+      navigator_subject,
       deliverator_shipment,
     ),
   )
 }
 
-fn receiver_restart(
+pub fn receiver_restart(
   receiver_subject: ReceiverSubject,
   receiver_pool_subject: ReceiverPoolSubject,
+  deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
+  coordinates_store_subject: store.CoordinateStoreSubject,
+  coordinates_cache_subject: cache.CoordinatesCacheSubject,
+  navigator_subject: navigator.NavigatorSubject,
 ) {
   actor.send(
     receiver_pool_subject,
-    ReceiverRestart(receiver_subject, receiver_pool_subject),
+    ReceiverRestart(
+      receiver_subject,
+      receiver_pool_subject,
+      deliverator_pool_subject,
+      coordinates_store_subject,
+      coordinates_cache_subject,
+      navigator_subject,
+    ),
   )
 }
 
@@ -319,11 +530,6 @@ pub opaque type ReceiverMessage {
     navigator_subject: navigator.NavigatorSubject,
     deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
     packages: List(Package),
-  )
-
-  ReceiveMemoizedShortestPathAndDistance(
-    receiver_subject: ReceiverSubject,
-    shortest_path_and_distances: ShortestPathWithDistances,
   )
 }
 
@@ -349,7 +555,7 @@ pub fn generate_geoids_permutations(list: List(Int)) -> List(List(Int)) {
   }
 }
 
-fn add_home_base_to_paths(paths: List(List(Int))) {
+fn add_home_base_to_path(paths: List(List(Int))) -> List(List(GeoId)) {
   paths
   |> list.map(with: fn(path) {
     [constants.receiver_home_geoid, ..path]
@@ -358,38 +564,32 @@ fn add_home_base_to_paths(paths: List(List(Int))) {
 }
 
 fn create_geoid_pairs_helper(
-  geoid_pairs: List(#(Int, Int)),
   path: List(Int),
+  geoid_pairs: List(#(Int, Int)),
   stack: List(Int),
 ) {
-  case path, stack {
-    [], [] | [], _stack -> geoid_pairs
+  case stack, path {
+    _stack, [] -> geoid_pairs
 
     // starting, stack is empty
-    [geoid, ..rest_geoids], [] ->
+    [], [geoid, ..rest_geoids] ->
       // add geoid to stack and continue
-      create_geoid_pairs_helper(geoid_pairs, rest_geoids, [geoid, ..stack])
+      create_geoid_pairs_helper(rest_geoids, geoid_pairs, [geoid, ..stack])
 
-    [curr_geoid, ..rest_geoids], [prev_geoid, ..rest_stack] ->
+    [prev_geoid, ..rest_stack], [curr_geoid, ..rest_geoids] ->
       // take the prev_geoid and current as pair
       // add current to stack and continue
       create_geoid_pairs_helper(
-        [#(prev_geoid, curr_geoid), ..geoid_pairs],
         rest_geoids,
+        [#(prev_geoid, curr_geoid), ..geoid_pairs],
         [curr_geoid, ..rest_stack],
       )
   }
 }
 
 fn create_geoid_pairs(paths: List(List(GeoId))) -> List(List(#(GeoId, GeoId))) {
-  // paths
-  // |> list.fold(from: [], with: fn(acc, path) {
-  //   let geoid_pairs = create_geoid_pairs_helper([], path, [])
-  //   [geoid_pairs, ..acc]
-  // })
-
   paths
-  |> list.map(with: fn(path) { create_geoid_pairs_helper([], path, []) })
+  |> list.map(with: fn(path) { path |> create_geoid_pairs_helper([], []) })
 }
 
 fn compute_distances_per_pair(
@@ -478,6 +678,8 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
       deliverator_pool_subject,
       packages,
     ) -> {
+      // as the parcels are removed from the geoids,
+      // the table is required for correct assignment
       let #(geoids, geoid_parcel_table) =
         packages
         |> list.fold(from: #([], dict.new()), with: fn(acc, tuple) {
@@ -489,6 +691,7 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
 
       let deliverator_shipment =
         generate_geoids_permutations(geoids)
+        |> add_home_base_to_path
         |> create_geoid_pairs
         |> compute_distances_per_pair(
           coordinates_store_subject,
@@ -502,16 +705,12 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
         receiver_subject,
         receiver_pool_subject,
         deliverator_pool_subject,
+        coordinates_store_subject,
+        coordinates_cache_subject,
+        navigator_subject,
         deliverator_shipment,
       )
 
-      actor.continue(state)
-    }
-
-    ReceiveMemoizedShortestPathAndDistance(
-      receiver_subject,
-      shortest_path_and_distances,
-    ) -> {
       actor.continue(state)
     }
   }
@@ -524,7 +723,7 @@ pub fn new_receiver(name: process.Name(ReceiverMessage)) {
   |> actor.start
 }
 
-fn send_to_receiver(
+fn calculate_shortest_path(
   receiver_subject: ReceiverSubject,
   receiver_pool_subject: ReceiverPoolSubject,
   coordinates_store_subject: store.CoordinateStoreSubject,

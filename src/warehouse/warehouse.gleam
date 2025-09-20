@@ -8,16 +8,28 @@ import warehouse/sup
 pub fn start() -> Nil {
   let deliverator_pool_name = process.new_name(constants.deliverator_pool)
   let receiver_pool_name = process.new_name(constants.receiver_pool)
-  let sup_spec = sup.start_supervisor(receiver_pool_name, deliverator_pool_name)
+  let coordinates_store_name = process.new_name(constants.coordinates_store)
+  let coordinates_cache_name = process.new_name(constants.distances_cache)
+  let navigator_name = process.new_name(constants.navigator)
+
+  let sup_spec =
+    sup.start_supervisor(
+      receiver_pool_name,
+      deliverator_pool_name,
+      coordinates_store_name,
+      coordinates_cache_name,
+      navigator_name,
+    )
+
   let assert Ok(_overmind) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(sup_spec)
     |> static_supervisor.start()
 
   process.sleep(100)
-  let random_batch = package.random_batch(constants.random_packages_size)
-  let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
-  pool.receive_packages(deliverator_pool_subject, random_batch)
+  // let random_batch = package.random_batch(constants.random_packages_size)
+  // let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
+  // pool.receive_packages(deliverator_pool_subject, random_batch)
 
   Nil
 }

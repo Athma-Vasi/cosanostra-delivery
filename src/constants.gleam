@@ -4,6 +4,12 @@ pub const receiver_pool = "Uncle Enzo"
 
 pub const deliverator_pool = "The Librarian"
 
+pub const coordinates_store = "Coordinates 4 U"
+
+pub const distances_cache = "The Displacements"
+
+pub const navigator = "Enkidu"
+
 pub const max_pool_limit = 1000
 
 pub const batch_size = 1
