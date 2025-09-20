@@ -5,6 +5,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/otp/actor
+import gleam/result
 import postal_code/cache
 import postal_code/navigator
 import postal_code/store
@@ -41,15 +42,10 @@ pub opaque type ReceiverPoolMessage {
 
   PathComputedSuccess(
     receiver_subject: ReceiverSubject,
-    packages: List(Package),
+    deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
+    deliverator_shipment: DeliveratorShipment,
   )
 
-  RequestMemoized(receiver_subject: ReceiverSubject, geoids: SortedAscGeoIds)
-
-  // ReceiverSuccess(
-  //   receiver_subject: ReceiverSubject,
-  //   receiver_pool_subject: ReceiverPoolSubject,
-  // )
   ReceiverRestart(
     receiver_subject: ReceiverSubject,
     receiver_pool_subject: ReceiverPoolSubject,
@@ -61,50 +57,23 @@ pub opaque type ReceiverState {
   Idle
 }
 
-type ReceiverRestarts =
-  Int
-
 type ReceiversTracker =
-  dict.Dict(ReceiverSubject, #(ReceiverState, ReceiverRestarts, List(Package)))
+  dict.Dict(ReceiverSubject, #(ReceiverState, Int, List(Package)))
 
 type SortedAscGeoIds =
-  List(Int)
-
-type ShortestPath =
-  List(#(GeoId, GeoId))
+  List(GeoId)
 
 type Distance =
   Float
 
+type ShortestPathWithDistances =
+  List(#(GeoId, Distance))
+
 type MemoizedShortestPathsDistances =
-  dict.Dict(SortedAscGeoIds, #(ShortestPath, Distance))
+  dict.Dict(SortedAscGeoIds, ShortestPathWithDistances)
 
 type ReceiverPoolState =
   #(PackageQueue, ReceiversTracker, MemoizedShortestPathsDistances)
-
-pub fn send_batches_to_available_receivers(
-  updated_receivers_tracker: ReceiversTracker,
-  available_receivers: List(#(ReceiverSubject, Int)),
-  batches: List(List(Package)),
-  receiver_pool_subject: ReceiverPoolSubject,
-) {
-  case available_receivers, batches {
-    [], [] | [], _batches | _available, [] -> updated_receivers_tracker
-
-    [available, ..rest_availables], [batch, ..rest_batches] -> {
-      let #(receiver_subject, restarts) = available
-      send_to_receiver(receiver_subject, receiver_pool_subject, batch)
-
-      send_batches_to_available_receivers(
-        updated_receivers_tracker
-          |> dict.insert(receiver_subject, #(Busy, restarts, batch)),
-        rest_availables,
-        rest_batches,
-        receiver_pool_subject,
-      )
-    }
-  }
-}
 
 fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
   let #(package_queue, receivers_tracker, memoized_shortest_distances_paths) =
@@ -119,7 +88,8 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       navigator_subject,
       packages,
     ) -> {
-      let updated_queue = package_queue |> list.append(packages)
+      let updated_queue: List(#(GeoId, Parcel)) =
+        package_queue |> list.append(packages)
 
       let available_receivers =
         receivers_tracker
@@ -139,18 +109,30 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
 
       // check each batch's geoids to see if we have already computed
       // the shortest distance path
-      let #(not_computed_batches, computed_batches) =
+      let #(not_computed_batches, deliverator_shipment) =
         batches
         |> list.fold(from: #([], []), with: fn(acc, batch) {
           let #(not_computed_batches, computed_batches) = acc
 
+          // table for later threading
+          let #(geoids, geoid_parcel_table) =
+            batch
+            |> list.fold(
+              from: #([], dict.new()),
+              with: fn(ids_table_acc, tuple) {
+                let #(geoids, geoid_parcel_table) = ids_table_acc
+                let #(geoid, parcel) = tuple
+
+                #(
+                  geoids |> list.append([geoid]),
+                  geoid_parcel_table |> dict.insert(geoid, parcel),
+                )
+              },
+            )
+
           // sort asc the geoids to check memo table
           let sorted_asc_geoids =
-            batch
-            |> list.map(with: fn(tuple) {
-              let #(geoid, _parcel) = tuple
-              geoid
-            })
+            geoids
             |> list.sort(by: fn(geoid1, geoid2) { int.compare(geoid1, geoid2) })
 
           case
@@ -163,10 +145,21 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
             )
 
             // if already computed, will be sent to deliverator pool
-            Ok(shortest_distance_path) -> #(
-              not_computed_batches,
-              computed_batches |> list.append([shortest_distance_path]),
-            )
+            Ok(shortest_path_and_distance) -> {
+              let deliverator_shipment =
+                shortest_path_and_distance
+                |> list.map(with: fn(tuple) {
+                  let #(geoid, distance) = tuple
+                  let parcel =
+                    geoid_parcel_table
+                    |> dict.get(geoid)
+                    |> result.unwrap(#("", ""))
+
+                  #(geoid, parcel, distance)
+                })
+
+              #(not_computed_batches, deliverator_shipment)
+            }
           }
         })
 
@@ -186,27 +179,78 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
         // else "push" available receivers batches to compute
         availables -> {
           let updated_receivers_tracker =
-            send_batches_to_available_receivers(
-              receivers_tracker,
-              not_computed_batches,
-              available_receivers,
-              receiver_pool_subject,
-              coordinates_store_subject,
-              coordinates_cache_subject,
-              navigator_subject,
-            )
+            not_computed_batches
+            |> list.zip(availables)
+            |> list.fold(from: receivers_tracker, with: fn(acc, zipped) {
+              let #(not_computed_batch, available) = zipped
+              let #(receiver_subject, restarts) = available
 
-          actor.continue()
+              send_to_receiver(
+                receiver_subject,
+                receiver_pool_subject,
+                coordinates_store_subject,
+                coordinates_cache_subject,
+                navigator_subject,
+                deliverator_pool_subject,
+                not_computed_batch,
+              )
+
+              acc
+              |> dict.insert(receiver_subject, #(
+                Busy,
+                restarts,
+                not_computed_batch,
+              ))
+            })
+
+          actor.continue(#(
+            sliced_queue,
+            updated_receivers_tracker,
+            memoized_shortest_distances_paths,
+          ))
         }
       }
     }
 
-    PathComputedSuccess(receiver_subject, packages) -> {
-      actor.continue(state)
-    }
+    PathComputedSuccess(
+      receiver_subject,
+      deliverator_pool_subject,
+      deliverator_shipment,
+    ) -> {
+      let #(_status, restarts, _batch) =
+        receivers_tracker
+        |> dict.get(receiver_subject)
+        |> result.unwrap(#(Idle, 0, []))
 
-    RequestMemoized(receiver_subject, geoids) -> {
-      actor.continue(state)
+      let updated_receivers_tracker =
+        receivers_tracker
+        |> dict.insert(receiver_subject, #(Idle, restarts, []))
+
+      // grab geoids to insert new shortest path with distances
+      let #(geoids, path_with_distances) =
+        deliverator_shipment
+        |> list.fold(from: #([], []), with: fn(acc, packet) {
+          let #(geoids, path_with_distances) = acc
+          let #(geoid, _parcel, distance) = packet
+
+          #([geoid, ..geoids], [#(geoid, distance), ..path_with_distances])
+        })
+
+      let sorted_asc_geoids =
+        geoids
+        |> list.sort(by: fn(geoid1, geoid2) { int.compare(geoid1, geoid2) })
+
+      let updated_memo_table =
+        memoized_shortest_distances_paths
+        |> dict.insert(sorted_asc_geoids, path_with_distances)
+
+      pool.receive_packages(deliverator_pool_subject, [])
+
+      actor.continue(#(
+        package_queue,
+        updated_receivers_tracker,
+        updated_memo_table,
+      ))
     }
 
     ReceiverRestart(receiver_subject, receiver_pool_subject) -> {
@@ -238,6 +282,34 @@ pub fn new_pool(
   |> actor.start
 }
 
+fn path_computed_success(
+  receiver_subject: ReceiverSubject,
+  receiver_pool_subject: ReceiverPoolSubject,
+  deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
+  deliverator_shipment: DeliveratorShipment,
+) {
+  actor.send(
+    receiver_pool_subject,
+    PathComputedSuccess(
+      receiver_subject,
+      deliverator_pool_subject,
+      deliverator_shipment,
+    ),
+  )
+}
+
+fn receiver_restart(
+  receiver_subject: ReceiverSubject,
+  receiver_pool_subject: ReceiverPoolSubject,
+) {
+  actor.send(
+    receiver_pool_subject,
+    ReceiverRestart(receiver_subject, receiver_pool_subject),
+  )
+}
+
+// <><> Receiver <><>
+
 pub opaque type ReceiverMessage {
   CalculateShortestPath(
     receiver_subject: ReceiverSubject,
@@ -245,12 +317,13 @@ pub opaque type ReceiverMessage {
     coordinates_store_subject: store.CoordinateStoreSubject,
     coordinates_cache_subject: cache.CoordinatesCacheSubject,
     navigator_subject: navigator.NavigatorSubject,
+    deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
     packages: List(Package),
   )
 
   ReceiveMemoizedShortestPathAndDistance(
     receiver_subject: ReceiverSubject,
-    shortest_path_and_distance: #(ShortestPath, Distance),
+    shortest_path_and_distances: ShortestPathWithDistances,
   )
 }
 
@@ -319,55 +392,79 @@ fn create_geoid_pairs(paths: List(List(GeoId))) -> List(List(#(GeoId, GeoId))) {
   |> list.map(with: fn(path) { create_geoid_pairs_helper([], path, []) })
 }
 
-fn compute_distances_per_path(
+fn compute_distances_per_pair(
   geoid_pairs_list: List(List(#(GeoId, GeoId))),
   coordinates_store_subject: store.CoordinateStoreSubject,
   coordinates_cache_subject: cache.CoordinatesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
-) -> List(#(List(#(GeoId, GeoId)), Distance)) {
+) -> List(List(#(#(GeoId, GeoId), Distance))) {
   geoid_pairs_list
   |> list.map(with: fn(geoid_pairs) {
     // compute distance for a path (permutation of geoids)
-    // ex: [ [a, b], [b, c], [c, d] ]
-    let path_distance =
-      geoid_pairs
-      |> list.fold(from: 0.0, with: fn(acc, geoid_pair) {
-        let #(from, to) = geoid_pair
-        let distance =
-          navigator.get_distance(
-            navigator_subject,
-            from,
-            to,
-            coordinates_store_subject,
-            coordinates_cache_subject,
-          )
+    // ex: [ [1, 2], [2, 3], [3, 4] ]
+    // #([ #(#(1, 2), distance), #(#(2, 3), distance), #(#(3, 4), distance) ])    
+    geoid_pairs
+    |> list.map(with: fn(geoid_pair) {
+      let #(from, to) = geoid_pair
+      let distance =
+        navigator.get_distance(
+          navigator_subject,
+          from,
+          to,
+          coordinates_store_subject,
+          coordinates_cache_subject,
+        )
 
-        acc +. distance
-      })
-
-    // #([ [a, b], [b, c], [c, d] ], distance)
-    #(geoid_pairs, path_distance)
+      #(geoid_pair, distance)
+    })
   })
 }
 
 fn find_shortest_distance_path(
-  path_distance_tuples: List(#(List(#(GeoId, GeoId)), Distance)),
-) -> #(List(#(GeoId, GeoId)), Distance) {
-  path_distance_tuples
-  |> list.sort(by: fn(path_distance_tuple1, path_distance_tuple2) {
-    let #(_path1, distance1) = path_distance_tuple1
-    let #(_path2, distance2) = path_distance_tuple2
+  geoid_pair_distance_tuples: List(List(#(#(GeoId, GeoId), Distance))),
+) -> List(#(#(GeoId, GeoId), Distance)) {
+  geoid_pair_distance_tuples
+  |> list.sort(by: fn(list1, list2) {
+    let distance1 =
+      list1
+      |> list.fold(from: 0.0, with: fn(acc, tuple) {
+        let #(_pair, distance) = tuple
+        acc +. distance
+      })
+
+    let distance2 =
+      list2
+      |> list.fold(from: 0.0, with: fn(acc, tuple) {
+        let #(_pair, distance) = tuple
+        acc +. distance
+      })
+
     float.compare(distance1, distance2)
   })
-  |> list.index_fold(
-    from: #([], 0.0),
-    with: fn(acc, path_distance_tuple, index) {
-      case index == 0 {
-        True -> path_distance_tuple
-        False -> acc
-      }
-    },
-  )
+  |> list.index_fold(from: [], with: fn(acc, pair_distances, index) {
+    case index == 0 {
+      True -> pair_distances
+      False -> acc
+    }
+  })
+}
+
+type DeliveratorShipment =
+  List(#(GeoId, Parcel, Distance))
+
+fn create_deliverator_shipment(
+  geoid_pair_distances: List(#(#(GeoId, GeoId), Distance)),
+  geoid_parcel_table: dict.Dict(GeoId, Parcel),
+) -> DeliveratorShipment {
+  geoid_pair_distances
+  |> list.map(with: fn(geoid_pair_distance) {
+    let #(geoid_pair, distance) = geoid_pair_distance
+    let #(_from, to) = geoid_pair
+    let parcel =
+      geoid_parcel_table |> dict.get(to) |> result.unwrap(or: #("", ""))
+
+    #(to, parcel, distance)
+  })
 }
 
 fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
@@ -378,6 +475,7 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
       coordinates_store_subject,
       coordinates_cache_subject,
       navigator_subject,
+      deliverator_pool_subject,
       packages,
     ) -> {
       let #(geoids, geoid_parcel_table) =
@@ -389,30 +487,30 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
           #([geoid, ..geoids], geoid_parcel_table |> dict.insert(geoid, parcel))
         })
 
-      // sort ascending the packages as memo table keeps sorted keys
-      let sorted_geoids =
-        geoids
-        |> list.sort(by: fn(geoid1, geoid2) { int.compare(geoid1, geoid2) })
-
-      // check the memo table for memoized shortest path with distance
-      // let memoized_path_distance_tuple=
-
-      let shortest_distance_path =
+      let deliverator_shipment =
         generate_geoids_permutations(geoids)
         |> create_geoid_pairs
-        |> compute_distances_per_path(
+        |> compute_distances_per_pair(
           coordinates_store_subject,
           coordinates_cache_subject,
           navigator_subject,
         )
         |> find_shortest_distance_path
+        |> create_deliverator_shipment(geoid_parcel_table)
+
+      path_computed_success(
+        receiver_subject,
+        receiver_pool_subject,
+        deliverator_pool_subject,
+        deliverator_shipment,
+      )
 
       actor.continue(state)
     }
 
     ReceiveMemoizedShortestPathAndDistance(
       receiver_subject,
-      shortest_path_and_distance,
+      shortest_path_and_distances,
     ) -> {
       actor.continue(state)
     }
@@ -432,6 +530,7 @@ fn send_to_receiver(
   coordinates_store_subject: store.CoordinateStoreSubject,
   coordinates_cache_subject: cache.CoordinatesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
+  deliverator_pool_subject: process.Subject(pool.DeliveratorPoolMessage),
   packages: List(Package),
 ) -> Nil {
   process.sleep(100)
@@ -455,6 +554,7 @@ fn send_to_receiver(
       coordinates_store_subject,
       coordinates_cache_subject,
       navigator_subject,
+      deliverator_pool_subject,
       packages,
     ),
   )
