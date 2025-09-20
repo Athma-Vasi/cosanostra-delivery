@@ -3,13 +3,14 @@ import gleam/erlang/process
 import gleam/otp/static_supervisor
 import warehouse/package
 import warehouse/pool
+import warehouse/receiver
 import warehouse/sup
 
 pub fn start() -> Nil {
   let deliverator_pool_name = process.new_name(constants.deliverator_pool)
   let receiver_pool_name = process.new_name(constants.receiver_pool)
   let coordinates_store_name = process.new_name(constants.coordinates_store)
-  let coordinates_cache_name = process.new_name(constants.distances_cache)
+  let distances_cache_name = process.new_name(constants.distances_cache)
   let navigator_name = process.new_name(constants.navigator)
 
   let sup_spec =
@@ -17,7 +18,7 @@ pub fn start() -> Nil {
       receiver_pool_name,
       deliverator_pool_name,
       coordinates_store_name,
-      coordinates_cache_name,
+      distances_cache_name,
       navigator_name,
     )
 
@@ -26,10 +27,23 @@ pub fn start() -> Nil {
     |> static_supervisor.add(sup_spec)
     |> static_supervisor.start()
 
+  let _deliverator_pool_subject = process.named_subject(deliverator_pool_name)
+  let receiver_pool_subject = process.named_subject(receiver_pool_name)
+  let coordinates_store_subject = process.named_subject(coordinates_store_name)
+  let distances_cache_subject = process.named_subject(distances_cache_name)
+  let navigator_subject = process.named_subject(navigator_name)
+
   process.sleep(100)
-  // let random_batch = package.random_batch(constants.random_packages_size)
-  // let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
-  // pool.receive_packages(deliverator_pool_subject, random_batch)
+  let random_packages = package.random_packages(constants.random_packages_size)
+  let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
+  receiver.receive_packages(
+    receiver_pool_subject,
+    deliverator_pool_subject,
+    coordinates_store_subject,
+    distances_cache_subject,
+    navigator_subject,
+    random_packages,
+  )
 
   Nil
 }

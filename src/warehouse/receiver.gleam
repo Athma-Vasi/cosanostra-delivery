@@ -175,7 +175,7 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
         })
 
       // send computed batches to deliverator pool
-      pool.receive_packages(deliverator_pool_subject, [])
+      pool.receive_packets(deliverator_pool_subject, deliverator_shipment)
 
       case available_receivers {
         // all receivers currently computin'
@@ -252,7 +252,7 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
         |> dict.insert(sorted_asc_geoids, path_with_distances)
 
       // send ordered packages to deliverator pool for delivery
-      pool.receive_packages(deliverator_pool_subject, [])
+      pool.receive_packets(deliverator_pool_subject, [])
 
       // check if any packages remain to be delivered in queue 
       case package_queue {
