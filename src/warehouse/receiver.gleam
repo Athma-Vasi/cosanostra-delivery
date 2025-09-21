@@ -261,14 +261,24 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       navigator_subject,
       deliverator_shipment,
     ) -> {
+      echo "receiver reported computed shortest path"
+      echo receiver_subject
+      echo deliverator_shipment
+
       // grab geoids to insert new shortest path with distances
       let #(geoids, path_with_distances) =
         deliverator_shipment
+        // add home base at start, because its geoid is lost when creating shipment
+        // and it is required for memoization key
+        |> list.prepend(#(constants.receiver_start_geoid, #("", ""), 0.0))
         |> list.fold(from: #([], []), with: fn(acc, packet) {
           let #(geoids, path_with_distances) = acc
           let #(geoid, _parcel, distance) = packet
 
-          #([geoid, ..geoids], [#(geoid, distance), ..path_with_distances])
+          #(
+            [geoid, ..geoids],
+            path_with_distances |> list.append([#(geoid, distance)]),
+          )
         })
 
       // memo table keys are sorted asc set 
@@ -276,12 +286,23 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
         geoids
         |> list.sort(by: fn(geoid1, geoid2) { int.compare(geoid1, geoid2) })
 
+      // example sorted asc geoid keys:
+      // #([56001962700, 56001963102, 56021001100, 56045951300]
+      // example values path starting always at start geoid
+      // and ending always at end geoid:
+      // [#(56001962700, 0.0), #(56001963102, 5.47), #(56021001100, 62.68), #(56045951300, 305.84)]
       let updated_memo_table =
         memoized_shortest_distances_paths
         |> dict.insert(sorted_asc_geoids, path_with_distances)
 
+      echo "updated memo table"
+      echo updated_memo_table
+
       // send ordered packages to deliverator pool for delivery
-      deliverator.receive_packets(deliverator_pool_subject, [])
+      deliverator.receive_packets(
+        deliverator_pool_subject,
+        deliverator_shipment,
+      )
 
       // check if any packages remain to be delivered in queue 
       case package_queue {
@@ -567,127 +588,43 @@ pub opaque type ReceiverMessage {
   )
 }
 
-fn iterate_remaining_nums(
-  current_combination,
-  current_remaining_nums,
-  index,
-  stack,
-) {
-  case index == list.length(current_remaining_nums) {
-    True -> stack
-    False -> {
-      let current_remaining_num =
-        current_remaining_nums
-        |> list.index_fold(from: 0, with: fn(acc, curr, idx) {
-          case idx == index {
-            True -> curr
-            False -> acc
-          }
-        })
-      let updated_combination =
-        current_combination |> list.append([current_remaining_num])
-      let updated_remaining_nums =
-        current_remaining_nums
-        |> list.filter(keeping: fn(n) { n != current_remaining_num })
-      iterate_remaining_nums(
-        updated_combination,
-        updated_remaining_nums,
-        index + 1,
-        [#(updated_combination, updated_remaining_nums), ..stack],
-      )
-    }
-  }
-}
-
-fn iterate_stack(permutations, stack, geoids_length) {
-  case stack {
-    [] -> permutations
-    [top, ..rest] -> {
-      let #(current_combination, current_remaining_nums) = top
-
-      case list.length(current_combination) == geoids_length {
-        True ->
-          iterate_stack(
-            permutations |> list.append([current_combination]),
-            rest,
-            geoids_length,
-          )
-        False -> {
-          let new_stack =
-            iterate_remaining_nums(
-              current_combination,
-              current_remaining_nums,
-              0,
-              rest,
-            )
-
-          iterate_stack(permutations, new_stack, geoids_length)
-        }
-      }
-    }
-  }
-}
-
-fn generate_geoids_permutations_helper(geoids: List(Int)) {
-  let geoids_length = list.length(geoids)
-  let permutations = []
-
-  geoids
-  |> list.index_fold(from: permutations, with: fn(acc, geoid, index) {
-    let stack = []
-    let base_combination = [geoid]
-
-    let base_remaining_nums =
-      geoids |> list.filter(keeping: fn(n) { n != geoid })
-    let new_stack = [#(base_combination, base_remaining_nums), ..stack]
-
-    iterate_stack(acc, new_stack, geoids_length)
-  })
-}
-
 // T(n) = O(n!)
 // S(n) = O(n * n!)
 pub fn generate_geoids_permutations(geoids: List(Int)) -> List(List(Int)) {
-  // echo "generating geoids permutations"
-  // echo geoids
-  // let return = generate_geoids_permutations_helper(geoids)
-  // echo "generated geoids permutations"
-  // return
   case geoids {
     [] -> [[]]
 
-    // The recursive step:
     geoids ->
-      // `list.flat_map` allows us to iterate over the list and transform each element
-      // into a new list of results, which are then flattened into a single list.
+      // each element is transformed using flat_map into a new list of results,
+      // which are then flattened into a single list.
       geoids
       |> list.flat_map(fn(geoid) {
-        // Find all other elements in the list by deleting the current one.
-        // This is the Gleam equivalent of the Elixir `list -- [element]` syntax.
-        // let rest = list.delete_first(list, geoid)
-        // |> result.unwrap([])
+        // find all other elements in the list by deleting the current one
         let rest =
           geoids
           |> list.filter(keeping: fn(elem) { elem != geoid })
 
-        // Recursively find all permutations of the remaining elements.
+        // recursively find all permutations of the remaining elements
         let sub_permutations = generate_geoids_permutations(rest)
 
-        // Prepend the current element to each sub-permutation.
+        // prepend the current element to each sub-permutation
         list.map(sub_permutations, fn(p) { [geoid, ..p] })
       })
   }
 }
 
 fn add_home_base_to_path(paths: List(List(Int))) -> List(List(GeoId)) {
-  echo "adding home base to paths"
-  echo paths
+  let result =
+    paths
+    |> list.map(with: fn(path) {
+      [constants.receiver_start_geoid, ..path]
+      |> list.append([constants.receiver_end_geoid])
+    })
 
-  paths
-  |> list.map(with: fn(path) {
-    [constants.receiver_start_geoid, ..path]
-    |> list.append([constants.receiver_end_geoid])
-  })
+  echo "adding home base to paths"
+  echo result
+
+  result
 }
 
 fn create_geoid_pairs_helper(
@@ -716,11 +653,14 @@ fn create_geoid_pairs_helper(
 }
 
 fn create_geoid_pairs(paths: List(List(GeoId))) -> List(List(#(GeoId, GeoId))) {
-  echo "creating geoid pairs from path"
-  echo paths
+  let result =
+    paths
+    |> list.map(with: fn(path) { path |> create_geoid_pairs_helper([], []) })
 
-  paths
-  |> list.map(with: fn(path) { path |> create_geoid_pairs_helper([], []) })
+  echo "creating geoid pairs from path"
+  echo result
+
+  result
 }
 
 fn compute_distances_per_pair(
@@ -729,80 +669,107 @@ fn compute_distances_per_pair(
   distances_cache_subject: distances_cache.DistancesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
 ) -> List(List(#(#(GeoId, GeoId), Distance))) {
-  echo "computing distances per geoid pair"
-  echo geoid_pairs_list
+  let result =
+    geoid_pairs_list
+    |> list.map(with: fn(geoid_pairs) {
+      // compute distance for a path (permutation of geoids)
+      // ex: [ [1, 2], [2, 3], [3, 4] ]
+      // #([ #(#(1, 2), distance), #(#(2, 3), distance), #(#(3, 4), distance) ])    
+      geoid_pairs
+      |> list.map(with: fn(geoid_pair) {
+        let #(from, to) = geoid_pair
+        let distance =
+          navigator.get_distance(
+            navigator_subject,
+            from,
+            to,
+            coordinates_store_subject,
+            distances_cache_subject,
+          )
 
-  geoid_pairs_list
-  |> list.map(with: fn(geoid_pairs) {
-    // compute distance for a path (permutation of geoids)
-    // ex: [ [1, 2], [2, 3], [3, 4] ]
-    // #([ #(#(1, 2), distance), #(#(2, 3), distance), #(#(3, 4), distance) ])    
-    geoid_pairs
-    |> list.map(with: fn(geoid_pair) {
-      let #(from, to) = geoid_pair
-      let distance =
-        navigator.get_distance(
-          navigator_subject,
-          from,
-          to,
-          coordinates_store_subject,
-          distances_cache_subject,
-        )
-
-      #(geoid_pair, distance)
+        #(geoid_pair, distance)
+      })
     })
-  })
+
+  echo "computing distances per geoid pair"
+  echo result
+
+  result
 }
 
 fn find_shortest_distance_path(
   geoid_pair_distance_tuples: List(List(#(#(GeoId, GeoId), Distance))),
 ) -> List(#(#(GeoId, GeoId), Distance)) {
+  let result =
+    geoid_pair_distance_tuples
+    |> list.sort(by: fn(list1, list2) {
+      let distance1 =
+        list1
+        |> list.fold(from: 0.0, with: fn(acc, tuple) {
+          let #(_pair, distance) = tuple
+          acc +. distance
+        })
+
+      let distance2 =
+        list2
+        |> list.fold(from: 0.0, with: fn(acc, tuple) {
+          let #(_pair, distance) = tuple
+          acc +. distance
+        })
+
+      float.compare(distance1, distance2)
+    })
+    |> list.index_fold(from: [], with: fn(acc, pair_distances, index) {
+      case index == 0 {
+        True -> pair_distances
+        False -> acc
+      }
+    })
+
   echo "finding shortest distance path"
-  echo geoid_pair_distance_tuples
+  echo result
 
-  geoid_pair_distance_tuples
-  |> list.sort(by: fn(list1, list2) {
-    let distance1 =
-      list1
-      |> list.fold(from: 0.0, with: fn(acc, tuple) {
-        let #(_pair, distance) = tuple
-        acc +. distance
-      })
-
-    let distance2 =
-      list2
-      |> list.fold(from: 0.0, with: fn(acc, tuple) {
-        let #(_pair, distance) = tuple
-        acc +. distance
-      })
-
-    float.compare(distance1, distance2)
-  })
-  |> list.index_fold(from: [], with: fn(acc, pair_distances, index) {
-    case index == 0 {
-      True -> pair_distances
-      False -> acc
-    }
-  })
+  result
 }
 
 fn create_deliverator_shipment(
   shortest_distance_path: List(#(#(GeoId, GeoId), Distance)),
   geoid_parcel_table: dict.Dict(GeoId, Parcel),
 ) -> DeliveratorShipment {
+  let result =
+    shortest_distance_path
+    |> list.index_fold(from: [], with: fn(acc, geoid_pair_distance, index) {
+      let #(geoid_pair, distance) = geoid_pair_distance
+      let #(from, to) = geoid_pair
+      let parcel =
+        geoid_parcel_table |> dict.get(to) |> result.unwrap(or: #("", ""))
+
+      // the first shipment also includes the home_start base with empty parcel
+
+      case index == 0 {
+        True ->
+          acc |> list.append([#(from, #("", ""), 0.0), #(to, parcel, distance)])
+        // the last shipment is empty parcel as it's home_end
+        False -> acc |> list.append([#(to, parcel, distance)])
+      }
+    })
+  // shortest_distance_path
+  // |> list.map(with: fn(geoid_pair_distance) {
+  //   let #(geoid_pair, distance) = geoid_pair_distance
+  //   let #(_from, to) = geoid_pair
+
+  //   // the last shipment is empty parcel as it's home_end
+  //   let parcel =
+  //     geoid_parcel_table |> dict.get(to) |> result.unwrap(or: #("", ""))
+
+  //   #(to, parcel, distance)
+  // })
+
   echo "creating deliverator shipment"
-  echo shortest_distance_path
+  echo result
   echo geoid_parcel_table
 
-  shortest_distance_path
-  |> list.map(with: fn(geoid_pair_distance) {
-    let #(geoid_pair, distance) = geoid_pair_distance
-    let #(_from, to) = geoid_pair
-    let parcel =
-      geoid_parcel_table |> dict.get(to) |> result.unwrap(or: #("", ""))
-
-    #(to, parcel, distance)
-  })
+  result
 }
 
 fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
