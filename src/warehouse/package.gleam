@@ -3,7 +3,7 @@ import gleam/list
 import gleam/string
 import youid/uuid
 
-pub fn random_content() -> String {
+fn random_content() -> String {
   let content_options = [
     "Carbon paper", "Rolodex", "Protractor", "Fountain pen",
   ]
@@ -18,7 +18,7 @@ pub fn random_content() -> String {
   })
 }
 
-pub fn generate_package_id() -> String {
+fn generate_package_id() -> String {
   uuid.v4_string()
   |> string.replace(each: "-", with: "X")
   |> string.replace(each: "_", with: "X")

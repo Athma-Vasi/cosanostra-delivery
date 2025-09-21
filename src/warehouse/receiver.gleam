@@ -7,6 +7,7 @@ import gleam/list
 import gleam/option
 import gleam/otp/actor
 import gleam/result
+import gleam/string
 import navigator/coordinates_store
 import navigator/distances_cache
 import navigator/navigator
@@ -106,6 +107,8 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       navigator_subject,
       packages,
     ) -> {
+      echo "package received by receiver pool"
+
       let updated_queue: List(#(GeoId, Parcel)) =
         package_queue |> list.append(packages)
 
@@ -180,11 +183,22 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
           }
         })
 
+      echo "not computed batches: "
+      echo not_computed_batches
+      echo not_computed_batches |> list.length |> int.to_string
+      echo "deliverator shipment: "
+      echo deliverator_shipment
+      echo deliverator_shipment |> list.length |> int.to_string
+
       // send computed batches to deliverator pool
-      deliverator.receive_packets(
-        deliverator_pool_subject,
-        deliverator_shipment,
-      )
+      case deliverator_shipment {
+        [] -> Nil
+        deliverator_shipment ->
+          deliverator.receive_packets(
+            deliverator_pool_subject,
+            deliverator_shipment,
+          )
+      }
 
       case available_receivers {
         // all receivers currently computin'
@@ -689,6 +703,8 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
       deliverator_pool_subject,
       packages,
     ) -> {
+      echo "Receiver received packages to compute shortest path"
+
       // as the parcels are removed from the geoids,
       // the table is required for correct assignment
       let #(geoids, geoid_parcel_table) =
@@ -711,6 +727,18 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
         )
         |> find_shortest_distance_path
         |> create_deliverator_shipment(geoid_parcel_table)
+
+      echo "computed deliverator shipment: "
+      deliverator_shipment
+      |> list.each(fn(packet) {
+        let #(geoid, parcel, distance) = packet
+        echo "geoid: "
+          <> int.to_string(geoid)
+          <> ", distance: "
+          <> float.to_string(distance)
+          <> ", parcel: "
+          <> string.inspect(parcel)
+      })
 
       path_computed_success(
         receiver_subject,

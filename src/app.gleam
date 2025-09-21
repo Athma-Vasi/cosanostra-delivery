@@ -7,36 +7,20 @@ import warehouse/receiver
 import warehouse/sup as warehouse_sup
 
 pub fn start() {
-  let navigator_sup_spec = start_navigator()
-  process.sleep(1000)
-  let warehouse_sup_spec = start_warehouse()
-
-  let assert Ok(_overmind) =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(navigator_sup_spec)
-    |> static_supervisor.add(warehouse_sup_spec)
-    |> static_supervisor.restart_tolerance(intensity: 10, period: 1000)
-    |> static_supervisor.start()
-}
-
-fn start_navigator() {
   let coordinates_store_name = process.new_name(constants.coordinates_store)
   let navigator_name = process.new_name(constants.navigator)
   let distances_cache_name = process.new_name(constants.distances_cache)
-
-  navigator_sup.start_supervisor(
-    coordinates_store_name,
-    navigator_name,
-    distances_cache_name,
-  )
-}
-
-fn start_warehouse() {
   let deliverator_pool_name = process.new_name(constants.deliverator_pool)
   let receiver_pool_name = process.new_name(constants.receiver_pool)
-  let coordinates_store_name = process.new_name(constants.coordinates_store)
-  let distances_cache_name = process.new_name(constants.distances_cache)
-  let navigator_name = process.new_name(constants.navigator)
+
+  let navigator_sup_spec =
+    navigator_sup.start_supervisor(
+      coordinates_store_name,
+      navigator_name,
+      distances_cache_name,
+    )
+
+  process.sleep(1000)
 
   let warehouse_sup_spec =
     warehouse_sup.start_supervisor(
@@ -47,23 +31,29 @@ fn start_warehouse() {
       navigator_name,
     )
 
-  // let _deliverator_pool_subject = process.named_subject(deliverator_pool_name)
-  // let receiver_pool_subject = process.named_subject(receiver_pool_name)
-  // let coordinates_store_subject = process.named_subject(coordinates_store_name)
-  // let distances_cache_subject = process.named_subject(distances_cache_name)
-  // let navigator_subject = process.named_subject(navigator_name)
+  let assert Ok(_overmind) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(navigator_sup_spec)
+    |> static_supervisor.add(warehouse_sup_spec)
+    |> static_supervisor.restart_tolerance(intensity: 10, period: 1000)
+    |> static_supervisor.start()
 
-  // process.sleep(1000)
-  // let random_packages = package.random_packages(constants.random_packages_size)
-  // let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
-  // receiver.receive_packages(
-  //   receiver_pool_subject,
-  //   deliverator_pool_subject,
-  //   coordinates_store_subject,
-  //   distances_cache_subject,
-  //   navigator_subject,
-  //   random_packages,
-  // )
+  let random_packages = package.random_packages(constants.random_packages_size)
 
-  warehouse_sup_spec
+  process.sleep(1000)
+
+  let receiver_pool_subject = process.named_subject(receiver_pool_name)
+  let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
+  let coordinates_store_subject = process.named_subject(coordinates_store_name)
+  let distances_cache_subject = process.named_subject(distances_cache_name)
+  let navigator_subject = process.named_subject(navigator_name)
+
+  receiver.receive_packages(
+    receiver_pool_subject,
+    deliverator_pool_subject,
+    coordinates_store_subject,
+    distances_cache_subject,
+    navigator_subject,
+    random_packages,
+  )
 }

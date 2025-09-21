@@ -141,7 +141,7 @@ fn generate_deliverator_name(max_pool_limit) -> DeliveratorName {
   let random_index = names_pool |> list.length |> int.random
 
   names_pool
-  |> list.index_fold(from: "Da5id", with: fn(acc, name, index) {
+  |> list.index_fold(from: "ཐི༏ཋྀ", with: fn(acc, name, index) {
     case index == random_index {
       True -> name <> int.to_string(max_pool_limit)
       False -> acc

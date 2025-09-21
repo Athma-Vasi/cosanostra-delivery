@@ -142,6 +142,8 @@ fn handle_pool_message(
 
   case message {
     ReceivePackets(deliverator_pool_subject, packets) -> {
+      echo "Deliverator pool received packets"
+
       // insert packets into queue
       let updated_queue =
         packets
@@ -149,8 +151,14 @@ fn handle_pool_message(
           acc |> list.append([packet])
         })
 
+      echo "updated queue length: "
+      echo updated_queue |> list.length |> int.to_string
+
       let available_deliverators =
         find_available_deliverators(deliverators_tracker)
+
+      echo "available deliverators: "
+      echo available_deliverators |> list.length |> int.to_string
 
       case available_deliverators {
         // if all busy, add to queue and continue
@@ -363,6 +371,7 @@ pub fn receive_packets(
   deliverator_pool_subject: DeliveratorPoolSubject,
   packets: List(Packet),
 ) {
+  process.sleep(1000)
   actor.send(
     deliverator_pool_subject,
     ReceivePackets(deliverator_pool_subject, packets),
