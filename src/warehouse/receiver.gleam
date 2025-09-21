@@ -3,6 +3,7 @@ import gleam/dict
 import gleam/erlang/process
 import gleam/float
 import gleam/int
+import gleam/io
 import gleam/list
 import gleam/option
 import gleam/otp/actor
@@ -107,7 +108,8 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       navigator_subject,
       packages,
     ) -> {
-      echo "package received by receiver pool"
+      echo "packages received by receiver pool"
+      echo packages
 
       let updated_queue: List(#(GeoId, Parcel)) =
         package_queue |> list.append(packages)
@@ -127,6 +129,11 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
           updated_queue,
           list.length(available_receivers),
         )
+
+      echo "batches created from queue"
+      echo batches
+      echo "sliced queue"
+      echo sliced_queue
 
       // check each batch's geoids to see if memoized path exists
       let #(not_computed_batches, deliverator_shipment) =
@@ -183,12 +190,8 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
           }
         })
 
-      echo "not computed batches: "
+      echo "not computed batches"
       echo not_computed_batches
-      echo not_computed_batches |> list.length |> int.to_string
-      echo "deliverator shipment: "
-      echo deliverator_shipment
-      echo deliverator_shipment |> list.length |> int.to_string
 
       // send computed batches to deliverator pool
       case deliverator_shipment {
@@ -212,6 +215,9 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
 
         // else "push" available receivers batches to compute
         availables -> {
+          echo "availables"
+          echo availables
+
           let updated_receivers_tracker =
             not_computed_batches
             |> list.zip(availables)
@@ -561,33 +567,126 @@ pub opaque type ReceiverMessage {
   )
 }
 
+fn iterate_remaining_nums(
+  current_combination,
+  current_remaining_nums,
+  index,
+  stack,
+) {
+  case index == list.length(current_remaining_nums) {
+    True -> stack
+    False -> {
+      let current_remaining_num =
+        current_remaining_nums
+        |> list.index_fold(from: 0, with: fn(acc, curr, idx) {
+          case idx == index {
+            True -> curr
+            False -> acc
+          }
+        })
+      let updated_combination =
+        current_combination |> list.append([current_remaining_num])
+      let updated_remaining_nums =
+        current_remaining_nums
+        |> list.filter(keeping: fn(n) { n != current_remaining_num })
+      iterate_remaining_nums(
+        updated_combination,
+        updated_remaining_nums,
+        index + 1,
+        [#(updated_combination, updated_remaining_nums), ..stack],
+      )
+    }
+  }
+}
+
+fn iterate_stack(permutations, stack, geoids_length) {
+  case stack {
+    [] -> permutations
+    [top, ..rest] -> {
+      let #(current_combination, current_remaining_nums) = top
+
+      case list.length(current_combination) == geoids_length {
+        True ->
+          iterate_stack(
+            permutations |> list.append([current_combination]),
+            rest,
+            geoids_length,
+          )
+        False -> {
+          let new_stack =
+            iterate_remaining_nums(
+              current_combination,
+              current_remaining_nums,
+              0,
+              rest,
+            )
+
+          iterate_stack(permutations, new_stack, geoids_length)
+        }
+      }
+    }
+  }
+}
+
+fn generate_geoids_permutations_helper(geoids: List(Int)) {
+  let geoids_length = list.length(geoids)
+  let permutations = []
+
+  geoids
+  |> list.index_fold(from: permutations, with: fn(acc, geoid, index) {
+    let stack = []
+    let base_combination = [geoid]
+
+    let base_remaining_nums =
+      geoids |> list.filter(keeping: fn(n) { n != geoid })
+    let new_stack = [#(base_combination, base_remaining_nums), ..stack]
+
+    iterate_stack(acc, new_stack, geoids_length)
+  })
+}
+
 // T(n) = O(n!)
 // S(n) = O(n * n!)
-pub fn generate_geoids_permutations(list: List(Int)) -> List(List(Int)) {
-  case list {
+pub fn generate_geoids_permutations(geoids: List(Int)) -> List(List(Int)) {
+  // echo "generating geoids permutations"
+  // echo geoids
+  // let return = generate_geoids_permutations_helper(geoids)
+  // echo "generated geoids permutations"
+  // return
+  case geoids {
     [] -> [[]]
 
-    list ->
-      list.flat_map(list, fn(element) {
-        // get the rest of the list 
+    // The recursive step:
+    geoids ->
+      // `list.flat_map` allows us to iterate over the list and transform each element
+      // into a new list of results, which are then flattened into a single list.
+      geoids
+      |> list.flat_map(fn(geoid) {
+        // Find all other elements in the list by deleting the current one.
+        // This is the Gleam equivalent of the Elixir `list -- [element]` syntax.
+        // let rest = list.delete_first(list, geoid)
+        // |> result.unwrap([])
         let rest =
-          list
-          |> list.filter(keeping: fn(elem) { elem != element })
+          geoids
+          |> list.filter(keeping: fn(elem) { elem != geoid })
 
-        // recursively find all permutations of the remaining elements
+        // Recursively find all permutations of the remaining elements.
         let sub_permutations = generate_geoids_permutations(rest)
 
-        // prepend the current element to each sub-permutation to build the full permutations
-        list.map(sub_permutations, fn(p) { [element, ..p] })
+        // Prepend the current element to each sub-permutation.
+        list.map(sub_permutations, fn(p) { [geoid, ..p] })
       })
   }
 }
 
 fn add_home_base_to_path(paths: List(List(Int))) -> List(List(GeoId)) {
+  echo "adding home base to paths"
+  echo paths
+
   paths
   |> list.map(with: fn(path) {
-    [constants.receiver_home_geoid, ..path]
-    |> list.append([constants.receiver_home_geoid])
+    [constants.receiver_start_geoid, ..path]
+    |> list.append([constants.receiver_end_geoid])
   })
 }
 
@@ -609,13 +708,17 @@ fn create_geoid_pairs_helper(
       // add current to stack and continue
       create_geoid_pairs_helper(
         rest_geoids,
-        [#(prev_geoid, curr_geoid), ..geoid_pairs],
+        // [#(prev_geoid, curr_geoid), ..geoid_pairs],
+        geoid_pairs |> list.append([#(prev_geoid, curr_geoid)]),
         [curr_geoid, ..rest_stack],
       )
   }
 }
 
 fn create_geoid_pairs(paths: List(List(GeoId))) -> List(List(#(GeoId, GeoId))) {
+  echo "creating geoid pairs from path"
+  echo paths
+
   paths
   |> list.map(with: fn(path) { path |> create_geoid_pairs_helper([], []) })
 }
@@ -626,6 +729,9 @@ fn compute_distances_per_pair(
   distances_cache_subject: distances_cache.DistancesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
 ) -> List(List(#(#(GeoId, GeoId), Distance))) {
+  echo "computing distances per geoid pair"
+  echo geoid_pairs_list
+
   geoid_pairs_list
   |> list.map(with: fn(geoid_pairs) {
     // compute distance for a path (permutation of geoids)
@@ -651,6 +757,9 @@ fn compute_distances_per_pair(
 fn find_shortest_distance_path(
   geoid_pair_distance_tuples: List(List(#(#(GeoId, GeoId), Distance))),
 ) -> List(#(#(GeoId, GeoId), Distance)) {
+  echo "finding shortest distance path"
+  echo geoid_pair_distance_tuples
+
   geoid_pair_distance_tuples
   |> list.sort(by: fn(list1, list2) {
     let distance1 =
@@ -678,10 +787,14 @@ fn find_shortest_distance_path(
 }
 
 fn create_deliverator_shipment(
-  geoid_pair_distances: List(#(#(GeoId, GeoId), Distance)),
+  shortest_distance_path: List(#(#(GeoId, GeoId), Distance)),
   geoid_parcel_table: dict.Dict(GeoId, Parcel),
 ) -> DeliveratorShipment {
-  geoid_pair_distances
+  echo "creating deliverator shipment"
+  echo shortest_distance_path
+  echo geoid_parcel_table
+
+  shortest_distance_path
   |> list.map(with: fn(geoid_pair_distance) {
     let #(geoid_pair, distance) = geoid_pair_distance
     let #(_from, to) = geoid_pair
@@ -704,6 +817,7 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
       packages,
     ) -> {
       echo "Receiver received packages to compute shortest path"
+      echo packages
 
       // as the parcels are removed from the geoids,
       // the table is required for correct assignment
@@ -716,6 +830,11 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
           #([geoid, ..geoids], geoid_parcel_table |> dict.insert(geoid, parcel))
         })
 
+      echo "geoids to compute shortest path"
+      echo geoids
+      echo "geoid parcel table"
+      echo geoid_parcel_table
+
       let deliverator_shipment =
         generate_geoids_permutations(geoids)
         |> add_home_base_to_path
@@ -727,18 +846,6 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
         )
         |> find_shortest_distance_path
         |> create_deliverator_shipment(geoid_parcel_table)
-
-      echo "computed deliverator shipment: "
-      deliverator_shipment
-      |> list.each(fn(packet) {
-        let #(geoid, parcel, distance) = packet
-        echo "geoid: "
-          <> int.to_string(geoid)
-          <> ", distance: "
-          <> float.to_string(distance)
-          <> ", parcel: "
-          <> string.inspect(parcel)
-      })
 
       path_computed_success(
         receiver_subject,
@@ -771,8 +878,6 @@ fn calculate_shortest_path(
   deliverator_pool_subject: process.Subject(deliverator.DeliveratorPoolMessage),
   packages: List(Package),
 ) -> Nil {
-  process.sleep(100)
-
   // io.println(
   //   "Deliverator: "
   //   <> string.inspect(receiver_subject)

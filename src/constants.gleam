@@ -10,12 +10,14 @@ pub const distances_cache = "The Displacements"
 
 pub const navigator = "Enkidu"
 
-pub const max_pool_limit = 1
+pub const max_pool_limit = 2
 
-pub const batch_size = 1
+pub const batch_size = 2
 
-pub const random_packages_size = 3
+pub const random_packages_size = 4
 
 pub const crash_factor_limit = 98
 
-pub const receiver_home_geoid = 01_001_020_100
+pub const receiver_start_geoid = 56_001_962_700
+
+pub const receiver_end_geoid = 56_045_951_300

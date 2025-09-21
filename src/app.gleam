@@ -31,6 +31,8 @@ pub fn start() {
       navigator_name,
     )
 
+  process.sleep(1000)
+
   let assert Ok(_overmind) =
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(navigator_sup_spec)
@@ -38,16 +40,13 @@ pub fn start() {
     |> static_supervisor.restart_tolerance(intensity: 10, period: 1000)
     |> static_supervisor.start()
 
-  let random_packages = package.random_packages(constants.random_packages_size)
-
-  process.sleep(1000)
-
   let receiver_pool_subject = process.named_subject(receiver_pool_name)
   let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
   let coordinates_store_subject = process.named_subject(coordinates_store_name)
   let distances_cache_subject = process.named_subject(distances_cache_name)
   let navigator_subject = process.named_subject(navigator_name)
 
+  let random_packages = package.random_packages(constants.random_packages_size)
   receiver.receive_packages(
     receiver_pool_subject,
     deliverator_pool_subject,

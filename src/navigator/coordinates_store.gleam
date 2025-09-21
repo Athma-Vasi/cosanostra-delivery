@@ -1,5 +1,6 @@
 import gleam/dict
 import gleam/erlang/process
+import gleam/int
 import gleam/otp/actor
 import gleam/result
 import navigator/gazetteer_parser
@@ -33,6 +34,7 @@ fn handle_message(state: dict.Dict(Int, #(Float, Float)), message: StoreMessage)
 
 pub fn new(name: process.Name(StoreMessage)) {
   let state = gazetteer_parser.new() |> gazetteer_parser.parse
+  echo "Loaded " <> int.to_string(dict.size(state)) <> " coordinates"
 
   actor.new(state)
   |> actor.on_message(handle_message)

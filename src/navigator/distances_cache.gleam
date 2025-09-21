@@ -10,7 +10,11 @@ pub type DistancesCacheSubject =
 
 pub type CacheMessage {
   SetDistance(distance: Float, from: Int, to: Int)
-  GetDistance(reply_with: process.Subject(Float), from: Int, to: Int)
+  GetDistance(
+    reply_with: process.Subject(Result(Float, Nil)),
+    from: Int,
+    to: Int,
+  )
 }
 
 fn handle_message(state: dict.Dict(#(Int, Int), Float), message: CacheMessage) {
@@ -20,7 +24,7 @@ fn handle_message(state: dict.Dict(#(Int, Int), Float), message: CacheMessage) {
       actor.continue(updated)
     }
     GetDistance(client, from, to) -> {
-      let distance = state |> dict.get(#(from, to)) |> result.unwrap(0.0)
+      let distance = state |> dict.get(#(from, to))
       actor.send(client, distance)
       actor.continue(state)
     }

@@ -35,6 +35,9 @@ fn calculate_distance(from: #(Float, Float), to: #(Float, Float)) -> Float {
   let lat_diff = degrees_to_radians(lat2 -. lat1)
   let long_diff = degrees_to_radians(long2 -. long1)
 
+  let lat1 = degrees_to_radians(lat1)
+  let lat2 = degrees_to_radians(lat2)
+
   let cos_lat1 = maths.cos(lat1)
   let cos_lat2 = maths.cos(lat2)
 
@@ -62,12 +65,12 @@ fn handle_message(
       let distance = case
         distances_cache.get_distance(cache_subject, from, to)
       {
-        0.0 -> {
+        Error(Nil) -> {
           let here = coordinates_store.get_coordinates(store_subject, from)
           let there = coordinates_store.get_coordinates(store_subject, to)
           calculate_distance(here, there)
         }
-        dist -> dist
+        Ok(dist) -> dist
       }
 
       actor.send(client, distance)
