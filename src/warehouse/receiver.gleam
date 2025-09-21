@@ -491,7 +491,16 @@ pub fn new_pool(
   let receivers_tracker =
     receiver_names
     |> list.fold(from: dict.new(), with: fn(acc, receiver_name) {
-      acc |> dict.insert(process.named_subject(receiver_name), #(Idle, 0, []))
+      let status = Idle
+      let restarts = 0
+      let batch = []
+
+      acc
+      |> dict.insert(process.named_subject(receiver_name), #(
+        status,
+        restarts,
+        batch,
+      ))
     })
   let package_queue = []
   let memoized_shortest_distances_paths = dict.new()
@@ -590,6 +599,7 @@ pub opaque type ReceiverMessage {
 
 // T(n) = O(n!)
 // S(n) = O(n * n!)
+// where n is the constants.batch_size defined at author time
 pub fn generate_geoids_permutations(geoids: List(Int)) -> List(List(Int)) {
   case geoids {
     [] -> [[]]
@@ -622,7 +632,7 @@ fn add_home_base_to_path(paths: List(List(Int))) -> List(List(GeoId)) {
     })
 
   echo "adding home base to paths"
-  echo result
+  echo list.length(result)
 
   result
 }
@@ -658,12 +668,12 @@ fn create_geoid_pairs(paths: List(List(GeoId))) -> List(List(#(GeoId, GeoId))) {
     |> list.map(with: fn(path) { path |> create_geoid_pairs_helper([], []) })
 
   echo "creating geoid pairs from path"
-  echo result
+  echo list.length(result)
 
   result
 }
 
-fn compute_distances_per_pair(
+fn compute_distance_per_pair(
   geoid_pairs_list: List(List(#(GeoId, GeoId))),
   coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
   distances_cache_subject: distances_cache.DistancesCacheSubject,
@@ -674,6 +684,8 @@ fn compute_distances_per_pair(
     |> list.map(with: fn(geoid_pairs) {
       // compute distance for a path (permutation of geoids)
       // ex: [ [1, 2], [2, 3], [3, 4] ]
+      // where 1 is always start geoid and 4 is always end geoid
+      // and 2, 3 are the geoids with parcels to deliver
       // #([ #(#(1, 2), distance), #(#(2, 3), distance), #(#(3, 4), distance) ])    
       geoid_pairs
       |> list.map(with: fn(geoid_pair) {
@@ -692,7 +704,7 @@ fn compute_distances_per_pair(
     })
 
   echo "computing distances per geoid pair"
-  echo result
+  echo list.length(result)
 
   result
 }
@@ -806,7 +818,7 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
         generate_geoids_permutations(geoids)
         |> add_home_base_to_path
         |> create_geoid_pairs
-        |> compute_distances_per_pair(
+        |> compute_distance_per_pair(
           coordinates_store_subject,
           coordinates_cache_subject,
           navigator_subject,

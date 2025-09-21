@@ -7,6 +7,7 @@ import gleam/list
 import gleam/option
 import gleam/otp/actor
 import gleam/result
+import gleam/string
 import warehouse/utils
 
 type DeliveratorPoolSubject =
@@ -183,6 +184,11 @@ fn handle_pool_message(
     }
 
     PacketDelivered(deliverator_subject, delivered_packet) -> {
+      echo "Packet delivered by deliverator: "
+      echo string.inspect(deliverator_subject)
+      echo "Packet details: "
+      echo delivered_packet
+
       let updated_deliverators_tracker =
         remove_delivered_packet(
           deliverators_tracker,
@@ -350,12 +356,17 @@ pub fn new_pool(
   let deliverators_tracker =
     deliverator_names
     |> list.fold(from: dict.new(), with: fn(acc, deliverator_name) {
+      let status = Idle
+      let restarts = 0
+      let packets = []
+      let distance = 0.0
+
       acc
       |> dict.insert(process.named_subject(deliverator_name), #(
-        Idle,
-        0,
-        [],
-        0.0,
+        status,
+        restarts,
+        packets,
+        distance,
       ))
     })
   let packet_queue = []
