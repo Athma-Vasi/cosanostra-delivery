@@ -1,15 +1,10 @@
-// import app
-// import constants
-import app
+import constants
 import gleam/erlang/process
-
-// import gleam/otp/static_supervisor
-// import navigator/sup as navigator_sup
-// import warehouse/package
-// import warehouse/receiver
-// import warehouse/sup as warehouse_sup
+import gleam/otp/static_supervisor
+import playground/sup
 
 pub fn main() -> Nil {
-  app.start()
+  // app.start()
+  sup.start_overmind()
   process.sleep_forever()
 }
