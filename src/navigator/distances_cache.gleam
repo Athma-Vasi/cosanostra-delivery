@@ -1,7 +1,6 @@
 import gleam/dict
 import gleam/erlang/process
 import gleam/otp/actor
-import gleam/result
 
 const timeout = 5000
 

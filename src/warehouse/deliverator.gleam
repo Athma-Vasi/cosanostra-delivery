@@ -1,4 +1,3 @@
-import constants
 import gleam/dict
 import gleam/erlang/process
 import gleam/int
@@ -49,19 +48,19 @@ type DeliveratorsTracker =
     #(DeliveratorStatus, Int, List(Packet), Distance),
   )
 
-type Parcel =
+pub type Parcel =
   #(String, String)
 
-type GeoId =
+pub type GeoId =
   Int
 
 type PacketQueue =
   List(Packet)
 
-type Distance =
+pub type Distance =
   Float
 
-type Packet =
+pub type Packet =
   #(GeoId, Parcel, Distance)
 
 type DeliveratorPoolState =
@@ -429,22 +428,10 @@ pub opaque type DeliveratorMessage {
   )
 }
 
-fn maybe_crash() -> Nil {
-  let crash_factor = int.random(100)
-  io.println("Crash factor: " <> int.to_string(crash_factor))
-  case crash_factor > constants.crash_factor_limit {
-    True -> {
-      io.println("Uncle Enzo is not pleased... delivery deadline missed!")
-      panic as "Panic! At The Warehouse"
-    }
-    False -> Nil
-  }
-}
-
 fn make_delivery() -> Nil {
   let rand_timer = int.random(1000)
   process.sleep(rand_timer)
-  maybe_crash()
+  utils.maybe_crash()
 }
 
 fn deliver(
@@ -457,16 +444,6 @@ fn deliver(
     [packet, ..rest] -> {
       make_delivery()
       packet_delivered(deliverator_subject, deliverator_pool_subject, packet)
-
-      // let #(packet_id, content) = packet
-      // io.println(
-      //   "Deliverator: "
-      //   <> string.inspect(deliverator_subject)
-      //   <> " successfully delivered: "
-      //   <> packet_id
-      //   <> "\t"
-      //   <> content,
-      // )
 
       deliver(deliverator_subject, deliverator_pool_subject, rest)
     }
@@ -481,6 +458,7 @@ fn handle_deliverator_message(
     DeliverPackets(deliverator_subject, deliverator_pool_subject, packets) -> {
       deliver(deliverator_subject, deliverator_pool_subject, packets)
       deliverator_success(deliverator_subject, deliverator_pool_subject)
+
       actor.continue(state)
     }
   }
@@ -502,16 +480,9 @@ fn send_to_deliverator(
 ) -> Nil {
   process.sleep(100)
 
-  // io.println(
-  //   "Deliverator: "
-  //   <> string.inspect(deliverator_subject)
-  //   <> " received these packets: ",
-  // )
-  // packets
-  // |> list.each(fn(packet) {
-  //   let #(packet_id, content) = packet
-  //   io.println("\t" <> "id: " <> packet_id <> "\t" <> "content: " <> content)
-  // })
+  echo "Sending batch of "
+    <> int.to_string(list.length(packets))
+    <> " packets to deliverator"
 
   actor.send(
     deliverator_subject,

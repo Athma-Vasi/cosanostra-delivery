@@ -1,4 +1,5 @@
 import constants
+import gleam/int
 import gleam/list
 
 fn batch_and_slice_queue_helper(
@@ -39,4 +40,16 @@ pub fn get_first_batch(items) {
       False -> acc
     }
   })
+}
+
+pub fn maybe_crash() -> Nil {
+  let crash_factor = int.random(100)
+  echo "Crash factor: " <> int.to_string(crash_factor)
+  case crash_factor > constants.crash_factor_limit {
+    True -> {
+      echo "Uncle Enzo is not pleased... delivery deadline missed!"
+      panic as "Panic! At The Warehouse"
+    }
+    False -> Nil
+  }
 }
