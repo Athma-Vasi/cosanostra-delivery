@@ -17,7 +17,7 @@ fn start_distances_cache(name: process.Name(distances_cache.CacheMessage)) {
   fn() { distances_cache.new(name) }
 }
 
-pub fn start_supervisor(
+pub fn start_navigator_supervisor(
   coordinates_store_name: process.Name(coordinates_store.StoreMessage),
   navigator_name: process.Name(navigator.NavigatorMessage),
   distances_cache_name: process.Name(distances_cache.CacheMessage),

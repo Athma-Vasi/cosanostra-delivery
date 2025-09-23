@@ -248,7 +248,7 @@ fn handle_pool_message(
       let updated_queue = batches_queue |> list.append([batch_packets])
 
       let available_slots =
-        constants.max_pool_limit - dict.size(deliverators_tracker)
+        constants.deliverator_pool_limit - dict.size(deliverators_tracker)
       let #(selector, new_deliverators_subjects, updated_deliverators_tracker) =
         create_and_monitor_deliverator(
           available_slots,

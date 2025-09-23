@@ -14,7 +14,7 @@ pub fn start() {
   let receiver_pool_name = process.new_name(constants.receiver_pool)
 
   let navigator_sup_spec =
-    navigator_sup.start_supervisor(
+    navigator_sup.start_navigator_supervisor(
       coordinates_store_name,
       navigator_name,
       distances_cache_name,
@@ -23,7 +23,7 @@ pub fn start() {
   process.sleep(1000)
 
   let warehouse_sup_spec =
-    warehouse_sup.start_supervisor(
+    warehouse_sup.start_warehouse_supervisor(
       receiver_pool_name,
       deliverator_pool_name,
       coordinates_store_name,
