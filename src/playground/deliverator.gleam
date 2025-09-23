@@ -36,8 +36,11 @@ type PacketQueue =
 pub type Distance =
   Float
 
+type UndeliveredPackets =
+  List(List(Packet))
+
 type DeliveratorPoolState =
-  #(PacketQueue, DeliveratorsTracker)
+  #(PacketQueue, DeliveratorsTracker, UndeliveredPackets)
 
 pub opaque type DeliveratorPoolMessage {
   ReceivePackets(
@@ -87,7 +90,7 @@ fn handle_pool_message(
   state: DeliveratorPoolState,
   message: DeliveratorPoolMessage,
 ) {
-  let #(packet_queue, deliverators_tracker) = state
+  let #(packet_queue, deliverators_tracker, undelivered_packets) = state
 
   case message {
     ReceivePackets(deliverator_pool_subject, packets) -> {
@@ -182,7 +185,11 @@ fn handle_pool_message(
           )
         })
 
-      actor.continue(#(sliced_queue, updated_deliverators_tracker))
+      actor.continue(#(
+        sliced_queue,
+        updated_deliverators_tracker,
+        undelivered_packets,
+      ))
       |> actor.with_selector(selector)
     }
 
@@ -213,7 +220,11 @@ fn handle_pool_message(
         "_-_ " <> int.to_string(packets_remaining_count) <> " packets remaining",
       )
 
-      actor.continue(#(packet_queue, updated_deliverators_tracker))
+      actor.continue(#(
+        packet_queue,
+        updated_deliverators_tracker,
+        undelivered_packets,
+      ))
     }
 
     DeliveratorSuccess(deliverator_subject, deliverator_pool_subject) -> {
@@ -228,7 +239,7 @@ fn handle_pool_message(
 
       case down_msg {
         process.PortDown(monitor, pid, reason) -> {
-          todo
+          actor.continue(state)
         }
 
         process.ProcessDown(monitor, pid, reason) -> {
@@ -252,10 +263,17 @@ fn handle_pool_message(
                   }
                 })
 
-              actor.continue(#(packet_queue, updated_deliverators_tracker))
+              actor.continue(#(
+                packet_queue,
+                updated_deliverators_tracker,
+                undelivered_packets,
+              ))
             }
 
-            process.Abnormal(_) -> {
+            process.Abnormal(rsn) -> {
+              echo "Abnormal crash detected, restarting deliverator"
+                <> string.inspect(rsn)
+
               let #(subject, tracking_info) =
                 deliverators_tracker
                 |> dict.filter(keeping: fn(_subject, tracking_info) {
@@ -272,23 +290,21 @@ fn handle_pool_message(
                   #(process.new_subject(), #([], 0.0, option.None)),
                 )
 
-              let assert Ok(new_deliverator) = new_deliverator()
-              let new_deliverator_pid = new_deliverator.pid
-              let new_deliverator_subject = new_deliverator.data
+              let #(packets_remaining, _distance_so_far, _monitor_ref_maybe) =
+                tracking_info
+              let updated_undelivered_packets = [
+                packets_remaining,
+                ..undelivered_packets
+              ]
+              let updated_deliverators_tracker =
+                deliverators_tracker
+                |> dict.delete(subject)
 
-              echo "Started new deliverator: "
-                <> string.inspect(new_deliverator_subject)
-
-              // creating an actor automatically links it to the current process
-              // unlinking avoids a cascading crash to the pool
-              process.unlink(new_deliverator_pid)
-              let monitor = process.monitor(new_deliverator.pid)
-              let selector =
-                process.new_selector()
-                |> process.select_specific_monitor(monitor, Mon)
-                |> process.select(deliverator_pool_subject)
-
-              actor.continue(state)
+              actor.continue(#(
+                packet_queue,
+                updated_deliverators_tracker,
+                updated_undelivered_packets,
+              ))
             }
           }
         }
@@ -300,9 +316,10 @@ fn handle_pool_message(
 }
 
 pub fn new_pool(name: process.Name(DeliveratorPoolMessage)) {
-  let deliverators_tracker = dict.new()
   let packet_queue = []
-  let state = #(packet_queue, deliverators_tracker)
+  let deliverators_tracker = dict.new()
+  let undelivered_packets = []
+  let state = #(packet_queue, deliverators_tracker, undelivered_packets)
 
   actor.new(state)
   |> actor.named(name)
