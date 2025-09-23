@@ -35,13 +35,25 @@ pub fn start_overmind() {
 
   process.sleep(1000)
 
-  let test_packets = [
+  let test_batch1 = [
     #(1, #("parcel_1", "content_1"), 10.5),
     #(2, #("parcel_2", "content_2"), 20.0),
     #(3, #("parcel_3", "content_3"), 15.75),
   ]
+  let test_batch2 = [
+    #(4, #("parcel_4", "content_4"), 5.0),
+    #(5, #("parcel_5", "content_5"), 12.25),
+  ]
+  let test_batch3 = [
+    #(6, #("parcel_6", "content_6"), 8.0),
+    #(7, #("parcel_7", "content_7"), 14.5),
+    #(8, #("parcel_8", "content_8"), 9.75),
+    #(9, #("parcel_9", "content_9"), 11.0),
+    #(10, #("parcel_10", "content_10"), 7.5),
+  ]
+
   deliverator.receive_packets(
     process.named_subject(deliverator_pool_name),
-    test_packets,
+    test_batch3,
   )
 }

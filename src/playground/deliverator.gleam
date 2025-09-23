@@ -30,22 +30,27 @@ pub type GeoId =
 pub type Packet =
   #(GeoId, Parcel, Distance)
 
-type PacketQueue =
+pub type BatchPackets =
   List(Packet)
 
+pub type BatchesQueue =
+  List(BatchPackets)
+
+//  distance per pair-stop
 pub type Distance =
   Float
 
-type UndeliveredPackets =
-  List(List(Packet))
+pub type TotalDistance =
+  Float
 
+// total distance covered by all deliverators
 type DeliveratorPoolState =
-  #(PacketQueue, DeliveratorsTracker, UndeliveredPackets)
+  #(BatchesQueue, DeliveratorsTracker, TotalDistance, DeliveratorPoolSubject)
 
 pub opaque type DeliveratorPoolMessage {
   ReceivePackets(
     deliverator_pool_subject: DeliveratorPoolSubject,
-    packets: List(Packet),
+    batch_packets: BatchPackets,
   )
 
   PacketDelivered(
@@ -90,31 +95,38 @@ fn handle_pool_message(
   state: DeliveratorPoolState,
   message: DeliveratorPoolMessage,
 ) {
-  let #(packet_queue, deliverators_tracker, undelivered_packets) = state
+  let #(
+    batches_queue,
+    deliverators_tracker,
+    total_distance,
+    dps_for_process_down,
+  ) = state
 
   case message {
-    ReceivePackets(deliverator_pool_subject, packets) -> {
-      echo "Deliverator pool received packets: " <> string.inspect(packets)
+    ReceivePackets(deliverator_pool_subject, batch_packets) -> {
+      echo "Deliverator pool received batch packets: "
+        <> string.inspect(batch_packets)
 
-      // insert packets into queue
-      let updated_queue =
-        packets
-        |> list.fold(from: packet_queue, with: fn(acc, packet) {
-          acc |> list.append([packet])
-        })
+      // all delivery packets "pulled" from queue
+      let updated_queue = batches_queue |> list.append([batch_packets])
 
-      // let queue_length = list.length(updated_queue)
       let max_pool_limit = 3
       let deliverator_count = dict.size(deliverators_tracker)
       let available_slots = max_pool_limit - deliverator_count
       let available_range = list.range(from: 1, to: available_slots)
 
-      let #(monitors, new_deliverators, updated_deliverators_tracker) =
+      let #(selector, new_deliverators, updated_deliverators_tracker) =
         available_range
         |> list.fold(
-          from: #([], [], deliverators_tracker),
+          from: #(
+            // add selector back for deliverator pool subject
+            // because actor.with_selector() replaces previously given selectors
+            process.new_selector() |> process.select(deliverator_pool_subject),
+            [],
+            deliverators_tracker,
+          ),
           with: fn(acc, _packet) {
-            let #(monitors, new_deliverators, updated_deliverators_tracker) =
+            let #(selector, new_deliverators, updated_deliverators_tracker) =
               acc
             let assert Ok(new_deliverator) = new_deliverator()
             let new_deliverator_pid = new_deliverator.pid
@@ -124,12 +136,12 @@ fn handle_pool_message(
               <> string.inspect(new_deliverator_subject)
 
             // creating an actor automatically links it to the current process
-            // unlinking avoids a cascading crash to the pool
+            // unlinking avoids a cascading crash of the pool
             process.unlink(new_deliverator_pid)
             let monitor = process.monitor(new_deliverator.pid)
 
             #(
-              [monitor, ..monitors],
+              selector |> process.select_specific_monitor(monitor, Mon),
               [new_deliverator_subject, ..new_deliverators],
               updated_deliverators_tracker
                 |> dict.insert(new_deliverator_subject, #(
@@ -141,17 +153,16 @@ fn handle_pool_message(
           },
         )
 
-      let selector =
-        monitors
-        |> list.fold(from: process.new_selector(), with: fn(acc, monitor_ref) {
-          acc
-          |> process.select_specific_monitor(monitor_ref, Mon)
-        })
-        // because with_selector replaces previously given selectors
-        |> process.select(deliverator_pool_subject)
-
       let #(batches, sliced_queue) =
-        utils.batch_and_slice_queue(updated_queue, available_slots)
+        updated_queue
+        |> list.index_fold(from: #([], []), with: fn(acc, batch, index) {
+          let #(batches, sliced_queue) = acc
+          case index < available_slots {
+            True -> #([batch, ..batches], sliced_queue)
+            False -> #(batches, [batch, ..sliced_queue])
+          }
+        })
+
       echo "Dispatching "
         <> int.to_string(list.length(batches))
         <> " batches to deliverators"
@@ -177,7 +188,7 @@ fn handle_pool_message(
 
                 option.Some(tracking_info) -> {
                   let #(_packets, distance_so_far, monitor_ref) = tracking_info
-                  // add batch for packets loss prevention
+                  // add batch for packet loss prevention
                   #(batch, distance_so_far, monitor_ref)
                 }
               }
@@ -188,7 +199,8 @@ fn handle_pool_message(
       actor.continue(#(
         sliced_queue,
         updated_deliverators_tracker,
-        undelivered_packets,
+        total_distance,
+        dps_for_process_down,
       ))
       |> actor.with_selector(selector)
     }
@@ -221,9 +233,10 @@ fn handle_pool_message(
       )
 
       actor.continue(#(
-        packet_queue,
+        batches_queue,
         updated_deliverators_tracker,
-        undelivered_packets,
+        total_distance,
+        dps_for_process_down,
       ))
     }
 
@@ -231,14 +244,89 @@ fn handle_pool_message(
       echo "A deliverator has successfully completed its deliveries: "
         <> string.inspect(deliverator_subject)
 
-      actor.continue(state)
+      // check if there are more batches of packets to deliver
+      case batches_queue {
+        // all batches currently assigned to deliverators
+        [] -> {
+          // nothing more to do, stop the deliverator
+          stop_deliverator(deliverator_subject)
+
+          let deliverator_tracking_info =
+            deliverators_tracker
+            |> dict.get(deliverator_subject)
+            |> result.unwrap(#([], 0.0, option.None))
+          let #(_packets, distance_so_far, _monitor_ref) =
+            deliverator_tracking_info
+
+          actor.continue(#(
+            [],
+            deliverators_tracker |> dict.delete(deliverator_subject),
+            // add distance covered by this deliverator to total distance
+            total_distance +. distance_so_far,
+            dps_for_process_down,
+          ))
+        }
+
+        // there are more batches to assign to deliverators
+        batches_queue -> {
+          let #(batches, sliced_queue) =
+            batches_queue
+            |> list.index_fold(from: #([], []), with: fn(acc, batch, index) {
+              let #(batches, sliced_queue) = acc
+              case index < 1 {
+                True -> #([batch, ..batches], sliced_queue)
+                False -> #(batches, [batch, ..sliced_queue])
+              }
+            })
+          let batch = utils.get_first_batch(batches)
+
+          // add new batch to deliverator's tracking info
+          let updated_deliverators_tracker =
+            deliverators_tracker
+            |> dict.upsert(
+              update: deliverator_subject,
+              with: fn(tracking_info_maybe) {
+                case tracking_info_maybe {
+                  option.None -> #(batch, 0.0, option.None)
+
+                  option.Some(tracking_info) -> {
+                    let #(_packets, distance_so_far, monitor_ref) =
+                      tracking_info
+                    // add batch for packet loss prevention
+                    #(batch, distance_so_far, monitor_ref)
+                  }
+                }
+              },
+            )
+
+          // send new batch to deliverator
+          send_to_deliverator(
+            deliverator_subject,
+            deliverator_pool_subject,
+            batch,
+          )
+
+          actor.continue(#(
+            sliced_queue,
+            updated_deliverators_tracker,
+            total_distance,
+            dps_for_process_down,
+          ))
+        }
+      }
     }
 
     Mon(down_msg) -> {
       echo "A deliverator has crashed or exited: "
 
       case down_msg {
+        // unlikely to happen as there are no ports used
         process.PortDown(monitor, pid, reason) -> {
+          echo "PortDown reason: "
+            <> string.inspect(reason)
+            <> string.inspect(pid)
+            <> string.inspect(monitor)
+
           actor.continue(state)
         }
 
@@ -247,34 +335,18 @@ fn handle_pool_message(
           echo "ProcessDown reason: "
             <> string.inspect(reason)
             <> string.inspect(pid)
+            <> string.inspect(monitor)
 
           case reason {
-            // actor.stop() sends Normal reason
-            process.Normal | process.Killed -> {
-              // remove from tracker as packet queue is empty
-              let updated_deliverators_tracker =
-                deliverators_tracker
-                |> dict.filter(keeping: fn(_subject, tracking_info) {
-                  let #(_packets, _distance_so_far, monitor_ref_maybe) =
-                    tracking_info
-                  case monitor_ref_maybe {
-                    option.None -> True
-                    option.Some(monitor_ref) -> monitor_ref != monitor
-                  }
-                })
+            // stopped deliverator sends Normal reason
+            process.Normal | process.Killed -> actor.continue(state)
 
-              actor.continue(#(
-                packet_queue,
-                updated_deliverators_tracker,
-                undelivered_packets,
-              ))
-            }
-
+            // deliverator has crashed and sends Abnormal reason
             process.Abnormal(rsn) -> {
               echo "Abnormal crash detected, restarting deliverator"
                 <> string.inspect(rsn)
 
-              let #(subject, tracking_info) =
+              let #(crashed_subject, tracking_info) =
                 deliverators_tracker
                 |> dict.filter(keeping: fn(_subject, tracking_info) {
                   let #(_packets, _distance_so_far, monitor_ref_maybe) =
@@ -292,34 +364,88 @@ fn handle_pool_message(
 
               let #(packets_remaining, _distance_so_far, _monitor_ref_maybe) =
                 tracking_info
-              let updated_undelivered_packets = [
-                packets_remaining,
-                ..undelivered_packets
-              ]
-              let updated_deliverators_tracker =
-                deliverators_tracker
-                |> dict.delete(subject)
+
+              let #(selector, new_deliverators, updated_deliverators_tracker) =
+                [1]
+                |> list.fold(
+                  from: #(
+                    // add selector back for deliverator pool subject
+                    // because actor.with_selector() replaces previously given selectors
+                    process.new_selector()
+                      |> process.select(dps_for_process_down),
+                    [],
+                    deliverators_tracker |> dict.delete(crashed_subject),
+                  ),
+                  with: fn(acc, _packet) {
+                    let #(
+                      selector,
+                      new_deliverators,
+                      updated_deliverators_tracker,
+                    ) = acc
+                    let assert Ok(new_deliverator) = new_deliverator()
+                    let new_deliverator_pid = new_deliverator.pid
+                    let new_deliverator_subject = new_deliverator.data
+
+                    echo "Started new deliverator: "
+                      <> string.inspect(new_deliverator_subject)
+
+                    // creating an actor automatically links it to the current process
+                    // unlinking avoids a cascading crash of the pool
+                    process.unlink(new_deliverator_pid)
+                    let monitor = process.monitor(new_deliverator.pid)
+
+                    #(
+                      selector |> process.select_specific_monitor(monitor, Mon),
+                      [new_deliverator_subject, ..new_deliverators],
+                      updated_deliverators_tracker
+                        |> dict.insert(new_deliverator_subject, #(
+                          packets_remaining,
+                          0.0,
+                          option.Some(monitor),
+                        )),
+                    )
+                  },
+                )
+
+              new_deliverators
+              |> list.zip(with: [packets_remaining])
+              |> list.each(fn(zipped) {
+                let #(deliverator_subject, batch) = zipped
+
+                send_to_deliverator(
+                  deliverator_subject,
+                  dps_for_process_down,
+                  batch,
+                )
+              })
 
               actor.continue(#(
-                packet_queue,
+                batches_queue,
                 updated_deliverators_tracker,
-                updated_undelivered_packets,
+                total_distance,
+                dps_for_process_down,
               ))
+              |> actor.with_selector(selector)
             }
           }
         }
       }
-
-      actor.continue(state)
     }
   }
 }
 
 pub fn new_pool(name: process.Name(DeliveratorPoolMessage)) {
-  let packet_queue = []
+  let batches_queue = []
   let deliverators_tracker = dict.new()
-  let undelivered_packets = []
-  let state = #(packet_queue, deliverators_tracker, undelivered_packets)
+  let total_distance = 0.0
+  // required for pool to select on future messages in Mon(process.Down) case
+  let dps_for_process_down = process.named_subject(name)
+  let state = #(
+    batches_queue,
+    deliverators_tracker,
+    total_distance,
+    dps_for_process_down,
+  )
 
   actor.new(state)
   |> actor.named(name)
@@ -329,12 +455,12 @@ pub fn new_pool(name: process.Name(DeliveratorPoolMessage)) {
 
 pub fn receive_packets(
   deliverator_pool_subject: DeliveratorPoolSubject,
-  packets: List(Packet),
+  batch_packets: BatchPackets,
 ) {
   process.sleep(1000)
   actor.send(
     deliverator_pool_subject,
-    ReceivePackets(deliverator_pool_subject, packets),
+    ReceivePackets(deliverator_pool_subject, batch_packets),
   )
 }
 
@@ -371,7 +497,7 @@ pub opaque type DeliveratorMessage {
 }
 
 fn make_delivery() -> Nil {
-  let rand_timer = int.random(1000)
+  let rand_timer = int.random(3000)
   process.sleep(rand_timer)
   utils.maybe_crash()
 }
