@@ -12,7 +12,7 @@ pub const navigator = "Enkidu"
 
 pub const max_pool_limit = 2
 
-pub const batch_size = 5
+pub const batch_size = 1
 
 pub const random_packages_size = 10
 
