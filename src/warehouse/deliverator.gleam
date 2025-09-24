@@ -249,36 +249,55 @@ fn handle_pool_message(
 
       let available_slots =
         constants.deliverator_pool_limit - dict.size(deliverators_tracker)
-      let #(selector, new_deliverators_subjects, updated_deliverators_tracker) =
-        create_and_monitor_deliverator(
-          available_slots,
-          deliverator_pool_subject,
-          deliverators_tracker,
-          [],
-        )
 
-      let #(batches, sliced_queue) =
-        batch_and_slice_queue(updated_queue, available_slots)
+      case available_slots == 0 {
+        // if all deliverators are busy, just update the queue
+        True ->
+          actor.continue(#(
+            updated_queue,
+            deliverators_tracker,
+            total_distance,
+            dps_for_process_down,
+          ))
 
-      echo "Dispatching "
-        <> int.to_string(list.length(batches))
-        <> " batches to deliverators"
+        // there are available deliverators, create and assign batches
+        False -> {
+          let #(
+            selector,
+            new_deliverators_subjects,
+            updated_deliverators_tracker,
+          ) =
+            create_and_monitor_deliverator(
+              available_slots,
+              deliverator_pool_subject,
+              deliverators_tracker,
+              [],
+            )
 
-      let updated_deliverators_tracker =
-        zip_send_to_deliverators(
-          new_deliverators_subjects,
-          batches,
-          deliverator_pool_subject,
-          updated_deliverators_tracker,
-        )
+          let #(batches, sliced_queue) =
+            batch_and_slice_queue(updated_queue, available_slots)
 
-      actor.continue(#(
-        sliced_queue,
-        updated_deliverators_tracker,
-        total_distance,
-        dps_for_process_down,
-      ))
-      |> actor.with_selector(selector)
+          echo "Dispatching "
+            <> int.to_string(list.length(batches))
+            <> " batches to deliverators"
+
+          let updated_deliverators_tracker =
+            zip_send_to_deliverators(
+              new_deliverators_subjects,
+              batches,
+              deliverator_pool_subject,
+              updated_deliverators_tracker,
+            )
+
+          actor.continue(#(
+            sliced_queue,
+            updated_deliverators_tracker,
+            total_distance,
+            dps_for_process_down,
+          ))
+          |> actor.with_selector(selector)
+        }
+      }
     }
 
     PacketDelivered(deliverator_subject, delivered_packet) -> {
