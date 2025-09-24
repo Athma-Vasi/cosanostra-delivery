@@ -90,6 +90,7 @@ fn create_and_monitor_receivers(
   receiver_pool_subject: ReceiverPoolSubject,
   receivers_tracker: ReceiversTracker,
   packages_remaining: List(Package),
+  // process.Selector(ReceiverPoolMessage),
 ) -> #(
   process.Selector(ReceiverPoolMessage),
   List(ReceiverSubject),
@@ -97,37 +98,36 @@ fn create_and_monitor_receivers(
 ) {
   let available_range = list.range(from: 1, to: available_slots)
 
-  let #(selector, new_receivers_subjects, updated_receivers_tracker) =
+  let #(new_receivers_subjects, updated_receivers_tracker) =
     available_range
-    |> list.fold(
-      from: #(
-        // add selector back for receiver pool subject
-        // because actor.with_selector() replaces previously given selectors
-        process.new_selector() |> process.select(receiver_pool_subject),
-        [],
-        receivers_tracker,
-      ),
-      with: fn(acc, _package) {
-        let #(selector, new_receivers_subjects, updated_receivers_tracker) = acc
-        // creating an actor automatically links it to the calling process
-        let assert Ok(new_receiver) = new_receiver()
-        // unlinking avoids a cascading crash of the pool
-        process.unlink(new_receiver.pid)
-        let monitor = process.monitor(new_receiver.pid)
-        let new_receiver_subject = new_receiver.data
-        echo "Started new receiver: " <> string.inspect(new_receiver_subject)
+    |> list.fold(from: #([], receivers_tracker), with: fn(acc, _package) {
+      let #(new_receivers_subjects, updated_receivers_tracker) = acc
+      // creating an actor automatically links it to the calling process
+      let assert Ok(new_receiver) = new_receiver()
+      let monitor = process.monitor(new_receiver.pid)
+      // unlinking avoids a cascading crash of the pool
+      process.unlink(new_receiver.pid)
+      let new_receiver_subject = new_receiver.data
+      echo "Started new receiver: " <> string.inspect(new_receiver_subject)
 
-        #(
-          selector |> process.select_specific_monitor(monitor, Mon),
-          [new_receiver_subject, ..new_receivers_subjects],
-          updated_receivers_tracker
-            |> dict.insert(new_receiver_subject, #(
-              packages_remaining,
-              option.Some(monitor),
-            )),
-        )
-      },
-    )
+      #(
+        // selector |> process.select_specific_monitor(monitor, Mon),
+        // selector |> process.select_monitors(Mon),
+        [new_receiver_subject, ..new_receivers_subjects],
+        updated_receivers_tracker
+          |> dict.insert(new_receiver_subject, #(
+            packages_remaining,
+            option.Some(monitor),
+          )),
+      )
+    })
+
+  let selector =
+    process.new_selector()
+    // add selector back for receiver pool subject
+    // because actor.with_selector() replaces previously given selectors
+    |> process.select(receiver_pool_subject)
+    |> process.select_monitors(Mon)
 
   #(selector, new_receivers_subjects, updated_receivers_tracker)
 }
@@ -271,9 +271,6 @@ fn split_shortest_path(
   deliverator_shipment: DeliveratorShipment,
 ) -> #(List(GeoId), List(#(GeoId, Distance))) {
   deliverator_shipment
-  // add home base at start, because its geoid is lost when creating shipment
-  // and it is required for memoization key
-  |> list.prepend(#(constants.receiver_start_geoid, #("", ""), 0.0))
   |> list.fold(from: #([], []), with: fn(acc, package) {
     let #(geoids, path_with_distances) = acc
     let #(geoid, _parcel, distance) = package
@@ -302,8 +299,7 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       navigator_subject,
       packages,
     ) -> {
-      echo "packages received by receiver pool"
-      echo packages
+      echo "packages received by receiver pool" <> string.inspect(packages)
 
       let updated_queue = package_queue |> list.append(packages)
       let available_slots =
@@ -380,8 +376,10 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       deliverator_shipment,
     ) -> {
       echo "receiver reported computed shortest path"
-      echo receiver_subject
-      echo deliverator_shipment
+        <> string.inspect(receiver_subject)
+        <> string.inspect(deliverator_shipment)
+        <> "shipment size: "
+        <> int.to_string(list.length(deliverator_shipment))
 
       // grab geoids to insert new shortest path with distances
       let #(geoids, path_with_distances) =
@@ -458,6 +456,7 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
     }
 
     Mon(process_down_message) -> {
+      process.sleep(1000)
       let #(
         receiver_pool_subject,
         deliverator_pool_subject,
@@ -467,13 +466,25 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       ) = subjects_for_process_down
 
       case process_down_message {
-        process.PortDown(_monitor_ref, _pid, _reason) -> actor.continue(state)
+        process.PortDown(monitor_ref, _pid, _reason) -> {
+          echo "Port down: " <> string.inspect(monitor_ref)
+
+          actor.continue(state)
+        }
 
         process.ProcessDown(monitor_ref, pid, reason) -> {
           case reason {
-            process.Normal | process.Killed -> actor.continue(state)
+            process.Normal | process.Killed -> {
+              echo "Receiver stopped normally: " <> string.inspect(pid)
+              actor.continue(state)
+            }
 
             process.Abnormal(rsn) -> {
+              echo "Receiver crashed: "
+                <> string.inspect(pid)
+                <> " reason: "
+                <> string.inspect(rsn)
+
               let #(crashed_subject, tracking_info) =
                 find_crashed_subject_info(receivers_tracker, monitor_ref)
               let #(packages_remaining, _monitor_maybe) = tracking_info
@@ -752,17 +763,6 @@ fn create_deliverator_shipment(
       False -> acc |> list.append([#(to, parcel, distance)])
     }
   })
-  // shortest_distance_path
-  // |> list.map(with: fn(geoid_pair_distance) {
-  //   let #(geoid_pair, distance) = geoid_pair_distance
-  //   let #(_from, to) = geoid_pair
-
-  //   // the last shipment is empty parcel as it's home_end
-  //   let parcel =
-  //     geoid_parcel_table |> dict.get(to) |> result.unwrap(or: #("", ""))
-
-  //   #(to, parcel, distance)
-  // })
 }
 
 fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
@@ -776,8 +776,10 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
       deliverator_pool_subject,
       packages,
     ) -> {
-      echo "Receiver received packages to compute shortest path"
-      echo packages
+      echo "Receiver: "
+        <> string.inspect(receiver_subject)
+        <> "received packages to compute shortest path"
+        <> string.inspect(packages)
 
       // since the parcels are removed from the geoids,
       // the table is required for correct re-assignment
@@ -790,6 +792,8 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
           #([geoid, ..geoids], geoid_parcel_table |> dict.insert(geoid, parcel))
         })
 
+      utils.maybe_crash()
+
       let deliverator_shipment =
         generate_geoids_permutations(geoids)
         |> add_home_base_to_path
@@ -801,8 +805,6 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
         )
         |> find_shortest_distance_path
         |> create_deliverator_shipment(geoid_parcel_table)
-
-      utils.maybe_crash()
 
       path_computed_success(
         receiver_subject,
@@ -817,7 +819,10 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
       actor.continue(state)
     }
 
-    Stop -> actor.stop()
+    Stop -> {
+      process.sleep(1000)
+      actor.stop()
+    }
   }
 }
 
@@ -851,5 +856,6 @@ fn calculate_shortest_path(
 }
 
 fn stop_receiver(receiver_subject: ReceiverSubject) {
+  echo "Stopping receiver: " <> string.inspect(receiver_subject)
   actor.send(receiver_subject, Stop)
 }

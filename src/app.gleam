@@ -47,14 +47,26 @@ pub fn start() {
   let distances_cache_subject = process.named_subject(distances_cache_name)
   let navigator_subject = process.named_subject(navigator_name)
 
-  toss_packages(
+  process.sleep(1000)
+
+  let random_packages_chunks = package.random_packages(9)
+
+  receiver.receive_packages(
     receiver_pool_subject,
     deliverator_pool_subject,
     coordinates_store_subject,
     distances_cache_subject,
     navigator_subject,
-    constants.toss_packages_count,
+    random_packages_chunks,
   )
+  // toss_packages(
+  //   receiver_pool_subject,
+  //   deliverator_pool_subject,
+  //   coordinates_store_subject,
+  //   distances_cache_subject,
+  //   navigator_subject,
+  //   constants.toss_packages_count,
+  // )
 }
 
 fn toss_packages(
@@ -68,8 +80,8 @@ fn toss_packages(
   case chunks_count == 0 {
     True -> Nil
     False -> {
-      let chunk_size = int.random(10)
-      let random_packages_chunks = package.random_packages(chunk_size)
+      let random_packages_chunks =
+        package.random_packages(constants.toss_package_size)
 
       receiver.receive_packages(
         receiver_pool_subject,
@@ -80,7 +92,7 @@ fn toss_packages(
         random_packages_chunks,
       )
 
-      process.sleep(2000)
+      int.random(2000) |> process.sleep
 
       toss_packages(
         receiver_pool_subject,

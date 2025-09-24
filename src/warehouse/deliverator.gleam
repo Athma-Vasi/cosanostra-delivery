@@ -1,7 +1,6 @@
 import gleam/dict
 import gleam/erlang/process
 import gleam/int
-import gleam/io
 import gleam/list
 import gleam/option
 import gleam/otp/actor
@@ -54,17 +53,20 @@ pub type Parcel =
 pub type GeoId =
   Int
 
-type PacketQueue =
-  List(Packet)
-
 pub type Distance =
   Float
 
 pub type Packet =
   #(GeoId, Parcel, Distance)
 
+type PacketQueue =
+  List(Packet)
+
+type BatchesPacketsQueue =
+  List(PacketQueue)
+
 type DeliveratorPoolState =
-  #(PacketQueue, DeliveratorsTracker)
+  #(BatchesPacketsQueue, DeliveratorsTracker)
 
 fn remove_delivered_packet(
   deliverators_tracker,
@@ -92,7 +94,7 @@ fn remove_delivered_packet(
 }
 
 fn find_available_deliverators(
-  deliverators_tracker,
+  deliverators_tracker: DeliveratorsTracker,
 ) -> List(#(DeliveratorSubject, Int, Distance)) {
   deliverators_tracker
   |> dict.fold(from: [], with: fn(acc, deliverator_subject, tracking_info) {
@@ -105,10 +107,24 @@ fn find_available_deliverators(
   })
 }
 
+fn batch_and_slice_queue(
+  updated_queue: BatchesPacketsQueue,
+  available_slots: Int,
+) {
+  updated_queue
+  |> list.index_fold(from: #([], []), with: fn(acc, batch, idx) {
+    let #(batches, sliced_queue) = acc
+    case idx < available_slots {
+      True -> #([batch, ..batches], sliced_queue)
+      False -> #(batches, sliced_queue |> list.append([batch]))
+    }
+  })
+}
+
 fn send_batches_to_available_deliverators(
   updated_deliverators_tracker: DeliveratorsTracker,
   available_deliverators: List(#(DeliveratorSubject, Int, Distance)),
-  batches: List(List(Packet)),
+  batches: BatchesPacketsQueue,
   deliverator_pool_subject: DeliveratorPoolSubject,
 ) {
   case available_deliverators, batches {
@@ -138,27 +154,17 @@ fn handle_pool_message(
   state: DeliveratorPoolState,
   message: DeliveratorPoolMessage,
 ) {
-  let #(packet_queue, deliverators_tracker) = state
+  let #(batches_packets_queue, deliverators_tracker) = state
 
   case message {
-    ReceivePackets(deliverator_pool_subject, packets) -> {
-      echo "Deliverator pool received packets"
+    ReceivePackets(deliverator_pool_subject, batch) -> {
+      echo "Deliverator pool received batch" <> string.inspect(batch)
 
-      // insert packets into queue
-      let updated_queue =
-        packets
-        |> list.fold(from: packet_queue, with: fn(acc, packet) {
-          acc |> list.append([packet])
-        })
-
-      echo "updated queue length: "
-      echo updated_queue |> list.length |> int.to_string
+      // insert batch into queue
+      let updated_queue = batches_packets_queue |> list.append([batch])
 
       let available_deliverators =
         find_available_deliverators(deliverators_tracker)
-
-      echo "available deliverators: "
-      echo available_deliverators |> list.length |> int.to_string
 
       case available_deliverators {
         // if all busy, add to queue and continue
@@ -167,7 +173,7 @@ fn handle_pool_message(
         // else "push" available deliverators a batch of packets
         availables -> {
           let #(batches, sliced_queue) =
-            utils.batch_and_slice_queue(updated_queue, list.length(availables))
+            batch_and_slice_queue(updated_queue, availables |> list.length)
 
           actor.continue(#(
             sliced_queue,
@@ -184,9 +190,9 @@ fn handle_pool_message(
 
     PacketDelivered(deliverator_subject, delivered_packet) -> {
       echo "Packet delivered by deliverator: "
-      echo string.inspect(deliverator_subject)
-      echo "Packet details: "
-      echo delivered_packet
+        <> string.inspect(deliverator_subject)
+        <> "Packet details: "
+        <> string.inspect(delivered_packet)
 
       let updated_deliverators_tracker =
         remove_delivered_packet(
@@ -195,7 +201,12 @@ fn handle_pool_message(
           delivered_packet,
         )
 
-      let packets_remaining_count =
+      let #(_, _, packets_remaining_for_deliverator, _) =
+        updated_deliverators_tracker
+        |> dict.get(deliverator_subject)
+        |> result.unwrap(or: #(Idle, 0, [], 0.0))
+
+      let total_packets_remaining =
         updated_deliverators_tracker
         |> dict.fold(
           from: 0,
@@ -205,22 +216,30 @@ fn handle_pool_message(
           },
         )
 
-      io.println(
-        "_-_ " <> int.to_string(packets_remaining_count) <> " packets remaining",
-      )
+      echo "𓃰.  "
+        <> "Packets remaining for deliverator: "
+        <> packets_remaining_for_deliverator |> list.length |> int.to_string
+        <> " with subject: "
+        <> string.inspect(deliverator_subject)
+        <> "<>"
+        <> " total packets remaining"
+        <> int.to_string(total_packets_remaining)
 
-      actor.continue(#(packet_queue, updated_deliverators_tracker))
+      actor.continue(#(batches_packets_queue, updated_deliverators_tracker))
     }
 
     // all assigned packets (batch) to this deliverator have been delivered
     DeliveratorSuccess(deliverator_subject, deliverator_pool_subject) -> {
+      echo "Deliverator reported success: "
+        <> string.inspect(deliverator_subject)
+
       let #(_status, restarts, _packets, distance_so_far) =
         deliverators_tracker
         |> dict.get(deliverator_subject)
         |> result.unwrap(or: #(Idle, 0, [], 0.0))
 
       // check if any packets remain in queue
-      case packet_queue {
+      case batches_packets_queue {
         // all packets currently assigned to deliverators
         [] ->
           // update tracker and continue
@@ -239,13 +258,15 @@ fn handle_pool_message(
         packets_to_deliver -> {
           // each successful deliverator "pulls" a batch from the queue
           let #(batches, sliced_queue) =
-            utils.batch_and_slice_queue(packets_to_deliver, 1)
+            batch_and_slice_queue(packets_to_deliver, 1)
           let batch = utils.get_first_batch(batches)
+
           send_to_deliverator(
             deliverator_subject,
             deliverator_pool_subject,
             batch,
           )
+
           let updated_deliverators_tracker =
             deliverators_tracker
             |> dict.insert(deliverator_subject, #(
@@ -261,6 +282,8 @@ fn handle_pool_message(
     }
 
     DeliveratorRestart(deliverator_subject, deliverator_pool_subject) -> {
+      echo "Deliverator restarted: " <> string.inspect(deliverator_subject)
+
       let #(_status, restarts, undelivered_packets, distance_so_far) =
         deliverators_tracker
         |> dict.get(deliverator_subject)
@@ -271,7 +294,7 @@ fn handle_pool_message(
         True, [] | True, _undelivered ->
           // update tracker and continue
           actor.continue(#(
-            packet_queue,
+            batches_packets_queue,
             deliverators_tracker
               |> dict.insert(deliverator_subject, #(
                 Idle,
@@ -284,7 +307,7 @@ fn handle_pool_message(
         // reincarnated with all assigned packets delivered
         False, [] -> {
           // check if any packets remain in queue
-          case packet_queue {
+          case batches_packets_queue {
             // queue is empty, all packets delivered
             [] ->
               actor.continue(#(
@@ -302,7 +325,7 @@ fn handle_pool_message(
             packets_in_queue -> {
               // each reincarnated deliverator "pulls" a batch from the queue
               let #(batches, sliced_queue) =
-                utils.batch_and_slice_queue(packets_in_queue, 1)
+                batch_and_slice_queue(packets_in_queue, 1)
               let batch = utils.get_first_batch(batches)
               send_to_deliverator(
                 deliverator_subject,
@@ -341,7 +364,7 @@ fn handle_pool_message(
             undelivered,
           )
 
-          actor.continue(#(packet_queue, updated_deliverators_tracker))
+          actor.continue(#(batches_packets_queue, updated_deliverators_tracker))
         }
       }
     }
@@ -467,6 +490,8 @@ fn handle_deliverator_message(
 pub fn new_deliverator(
   name: process.Name(DeliveratorMessage),
 ) -> Result(actor.Started(DeliveratorSubject), actor.StartError) {
+  process.sleep(1000)
+
   actor.new([])
   |> actor.named(name)
   |> actor.on_message(handle_deliverator_message)
@@ -478,11 +503,7 @@ fn send_to_deliverator(
   deliverator_pool_subject: DeliveratorPoolSubject,
   packets: List(Packet),
 ) -> Nil {
-  process.sleep(100)
-
-  echo "Sending batch of "
-    <> int.to_string(list.length(packets))
-    <> " packets to deliverator"
+  process.sleep(1000)
 
   actor.send(
     deliverator_subject,

@@ -13,8 +13,9 @@ fn batch_and_slice_queue_helper(
 
     False -> {
       let batch =
-        sliced_queue |> list.take(up_to: constants.receiver_batch_size)
-      let rest = sliced_queue |> list.drop(up_to: constants.receiver_batch_size)
+        sliced_queue |> list.take(up_to: constants.deliverator_batch_size)
+      let rest =
+        sliced_queue |> list.drop(up_to: constants.deliverator_batch_size)
 
       batch_and_slice_queue_helper(
         [batch, ..batches],
