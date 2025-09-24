@@ -4,18 +4,21 @@ import gleam/int
 import gleam/list
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
+import navigator/coordinates_store
+import navigator/distances_cache
+import navigator/navigator
 import warehouse/deliverator
 import warehouse/receiver
 
-// --receiver--
+// --deliverator--
 
-type ReceiverPoolName =
-  process.Name(receiver.ReceiverPoolMessage)
+type DeliveratorPoolName =
+  process.Name(deliverator.DeliveratorPoolMessage)
 
-type ReceiverName =
-  process.Name(receiver.ReceiverMessage)
+type DeliveratorName =
+  process.Name(deliverator.DeliveratorMessage)
 
-fn generate_receiver_name(max_pool_limit) {
+fn generate_deliverator_name(max_pool_limit) {
   let names_pool = [
     "Hiro Protagonist", "Yours Truly", "Lagoon", "Ng", "Vitaly Chernobyl",
   ]
@@ -31,100 +34,102 @@ fn generate_receiver_name(max_pool_limit) {
   |> process.new_name
 }
 
-fn generate_receiver_names(
-  names: List(ReceiverName),
+fn generate_deliverator_names(
+  names: List(DeliveratorName),
   max_pool_limit,
-) -> List(ReceiverName) {
+) -> List(DeliveratorName) {
   case max_pool_limit == 0 {
     True -> names
     False ->
-      generate_receiver_names(
-        [generate_receiver_name(max_pool_limit), ..names],
+      generate_deliverator_names(
+        [generate_deliverator_name(max_pool_limit), ..names],
         max_pool_limit - 1,
       )
   }
 }
 
-fn start_receiver_pool(
-  receiver_pool_name: ReceiverPoolName,
-  receiver_names: List(ReceiverName),
+fn start_deliverator_pool(
+  deliverator_pool_name: DeliveratorPoolName,
+  deliverator_names: List(DeliveratorName),
 ) {
-  fn() { receiver.new_pool(receiver_pool_name, receiver_names) }
+  fn() { deliverator.new_pool(deliverator_pool_name, deliverator_names) }
 }
 
-fn start_receiver(
-  receiver_name: ReceiverName,
-  receiver_pool_name: ReceiverPoolName,
-  deliverator_pool_name,
-  coordinates_store_name,
-  coordinates_cache_name,
-  navigator_name,
+fn start_deliverator(
+  deliverator_name: DeliveratorName,
+  deliverator_pool_name: DeliveratorPoolName,
 ) {
   fn() {
-    let receiver_subject = process.named_subject(receiver_name)
-    let receiver_pool_subject = process.named_subject(receiver_pool_name)
+    let deliverator_subject = process.named_subject(deliverator_name)
     let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
-    let coordinates_store_subject =
-      process.named_subject(coordinates_store_name)
-    let coordinates_cache_subject =
-      process.named_subject(coordinates_cache_name)
-    let navigator_subject = process.named_subject(navigator_name)
 
-    receiver.receiver_restart(
-      receiver_subject,
-      receiver_pool_subject,
+    deliverator.deliverator_restart(
+      deliverator_subject,
       deliverator_pool_subject,
-      coordinates_store_subject,
-      coordinates_cache_subject,
-      navigator_subject,
     )
-    receiver.new_receiver(receiver_name)
+    deliverator.new_deliverator(deliverator_name)
   }
 }
 
-fn start_receivers(
-  pool_sup_builder: static_supervisor.Builder,
-  receiver_pool_name: ReceiverPoolName,
-  receiver_names: List(ReceiverName),
-  deliverator_pool_name,
-  coordinates_store_name,
-  coordinates_cache_name,
-  navigator_name,
+fn start_deliverators(
+  deliverator_sup_builder: static_supervisor.Builder,
+  deliverator_pool_name: DeliveratorPoolName,
+  deliverator_names: List(DeliveratorName),
 ) -> static_supervisor.Builder {
-  receiver_names
-  |> list.fold(from: pool_sup_builder, with: fn(acc, receiver_name) {
-    acc
+  deliverator_names
+  |> list.fold(deliverator_sup_builder, fn(sup, name) {
+    sup
     |> static_supervisor.add(
-      supervision.worker(start_receiver(
-        receiver_name,
-        receiver_pool_name,
-        deliverator_pool_name,
-        coordinates_store_name,
-        coordinates_cache_name,
-        navigator_name,
-      )),
+      supervision.worker(start_deliverator(name, deliverator_pool_name)),
     )
   })
-}
-
-// --deliverator--
-
-type DeliveratorPoolName =
-  process.Name(deliverator.DeliveratorPoolMessage)
-
-fn start_deliverator_pool(deliverator_pool_name: DeliveratorPoolName) {
-  fn() { deliverator.new_pool(deliverator_pool_name) }
 }
 
 fn start_deliverator_pool_supervisor(
   deliverator_pool_name: DeliveratorPoolName,
 ) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
-  static_supervisor.new(static_supervisor.OneForOne)
-  |> static_supervisor.add(
-    supervision.worker(start_deliverator_pool(deliverator_pool_name)),
+  let deliverator_names =
+    generate_deliverator_names([], constants.deliverator_pool_limit)
+
+  let deliverator_sup_builder =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(
+      supervision.worker(start_deliverator_pool(
+        deliverator_pool_name,
+        deliverator_names,
+      )),
+    )
+
+  start_deliverators(
+    deliverator_sup_builder,
+    deliverator_pool_name,
+    deliverator_names,
   )
   |> static_supervisor.restart_tolerance(intensity: 10, period: 1000)
   |> static_supervisor.supervised()
+}
+
+// --receiver--
+
+type ReceiverPoolName =
+  process.Name(receiver.ReceiverPoolMessage)
+
+fn start_receiver_pool(
+  receiver_pool_name: ReceiverPoolName,
+  coordinates_store_name: process.Name(coordinates_store.StoreMessage),
+  distances_cache_name: process.Name(distances_cache.CacheMessage),
+  navigator_name: process.Name(navigator.NavigatorMessage),
+  deliverator_pool_name: DeliveratorPoolName,
+) {
+  fn() {
+    receiver.new_pool(
+      receiver_pool_name,
+      coordinates_store_name,
+      distances_cache_name,
+      navigator_name,
+      deliverator_pool_name,
+    )
+  }
 }
 
 fn start_receiver_pool_supervisor(
@@ -134,23 +139,15 @@ fn start_receiver_pool_supervisor(
   coordinates_cache_name,
   navigator_name,
 ) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
-  let receiver_names =
-    generate_receiver_names([], constants.receiver_pool_limit)
-
-  let pool_sup_builder =
-    static_supervisor.new(static_supervisor.OneForOne)
-    |> static_supervisor.add(
-      supervision.worker(start_receiver_pool(receiver_pool_name, receiver_names)),
-    )
-
-  start_receivers(
-    pool_sup_builder,
-    receiver_pool_name,
-    receiver_names,
-    deliverator_pool_name,
-    coordinates_store_name,
-    coordinates_cache_name,
-    navigator_name,
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(
+    supervision.worker(start_receiver_pool(
+      receiver_pool_name,
+      coordinates_store_name,
+      coordinates_cache_name,
+      navigator_name,
+      deliverator_pool_name,
+    )),
   )
   |> static_supervisor.restart_tolerance(intensity: 10, period: 1000)
   |> static_supervisor.supervised()

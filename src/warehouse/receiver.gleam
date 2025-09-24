@@ -53,27 +53,7 @@ pub opaque type ReceiverPoolMessage {
     deliverator_shipment: DeliveratorShipment,
   )
 
-  // ReceiverSuccess(
-  //   receiver_subject: ReceiverSubject,
-  //   receiver_pool_subject: ReceiverPoolSubject,
-  //   deliverator_pool_subject: process.Subject(
-  //     deliverator.DeliveratorPoolMessage,
-  //   ),
-  //   coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-  //   distances_cache_subject: distances_cache.DistancesCacheSubject,
-  //   navigator_subject: navigator.NavigatorSubject,
-  // )
   Mon(process.Down)
-  // ReceiverRestart(
-  //   receiver_subject: ReceiverSubject,
-  //   receiver_pool_subject: ReceiverPoolSubject,
-  //   deliverator_pool_subject: process.Subject(
-  //     deliverator.DeliveratorPoolMessage,
-  //   ),
-  //   coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-  //   distances_cache_subject: distances_cache.DistancesCacheSubject,
-  //   navigator_subject: navigator.NavigatorSubject,
-  // )
 }
 
 type ReceiversTracker =
@@ -361,7 +341,7 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
         False -> {
           let #(selector, new_receivers_subjects, updated_receivers_tracker) =
             create_and_monitor_receivers(
-              list.length(not_computed_batches),
+              available_slots,
               receiver_pool_subject,
               receivers_tracker,
               sliced_queue,
@@ -535,24 +515,12 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
 
 pub fn new_pool(
   receiver_pool_name: process.Name(ReceiverPoolMessage),
-  receiver_names: List(process.Name(ReceiverMessage)),
   coordinates_store_name: process.Name(coordinates_store.StoreMessage),
   distances_cache_name: process.Name(distances_cache.CacheMessage),
   navigator_name: process.Name(navigator.NavigatorMessage),
   deliverator_pool_name: process.Name(deliverator.DeliveratorPoolMessage),
 ) {
-  let receivers_tracker =
-    receiver_names
-    |> list.fold(from: dict.new(), with: fn(acc, receiver_name) {
-      let batch = []
-      let monitor_maybe = option.None
-
-      acc
-      |> dict.insert(process.named_subject(receiver_name), #(
-        batch,
-        monitor_maybe,
-      ))
-    })
+  let receivers_tracker = dict.new()
   let package_queue = []
   let memoized_shortest_distances_paths = dict.new()
 
