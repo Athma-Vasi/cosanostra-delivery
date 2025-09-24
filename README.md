@@ -1,20 +1,13 @@
 # cosanostra_delivery
 
-[![Package Version](https://img.shields.io/hexpm/v/cosanostra_delivery)](https://hex.pm/packages/cosanostra_delivery)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/cosanostra_delivery/)
+This project simulates a delivery system built with Gleam and the OTP framework. It models core components as actors, including package management, deliverators, and navigation. The system leverages two concurrency patterns:
 
-```sh
-gleam add cosanostra_delivery@1
-```
-```gleam
-import cosanostra_delivery
+- **Dynamic pool pattern:** Deliverators are dynamically started and stopped as needed, with a configurable maximum to prevent resource exhaustion.
+- **Static pool pattern:** Receivers are assigned unique names, and their restarts are tracked. Reincarnated receivers retain their original identity, enabling robust state management.
 
-pub fn main() -> Nil {
-  // TODO: An example of the project in use
-}
-```
+![Supervision Tree](src/assets/cosanostra-supervision-treedrawio.png)
 
-Further documentation can be found at <https://hexdocs.pm/cosanostra_delivery>.
+
 
 ## Development
 
