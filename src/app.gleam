@@ -1,6 +1,5 @@
 import constants
 import gleam/erlang/process
-import gleam/int
 import gleam/otp/static_supervisor
 import navigator/sup as navigator_sup
 import warehouse/package
@@ -49,8 +48,8 @@ pub fn start() {
 
   process.sleep(1000)
 
-  let random_packages_chunks = package.random_packages(9)
-
+  let random_packages_chunks =
+    package.random_packages(constants.random_packages_count)
   receiver.receive_packages(
     receiver_pool_subject,
     deliverator_pool_subject,
@@ -59,49 +58,4 @@ pub fn start() {
     navigator_subject,
     random_packages_chunks,
   )
-  // toss_packages(
-  //   receiver_pool_subject,
-  //   deliverator_pool_subject,
-  //   coordinates_store_subject,
-  //   distances_cache_subject,
-  //   navigator_subject,
-  //   constants.toss_packages_count,
-  // )
-}
-
-fn toss_packages(
-  receiver_pool_subject,
-  deliverator_pool_subject,
-  coordinates_store_subject,
-  distances_cache_subject,
-  navigator_subject,
-  chunks_count,
-) {
-  case chunks_count == 0 {
-    True -> Nil
-    False -> {
-      let random_packages_chunks =
-        package.random_packages(constants.toss_package_size)
-
-      receiver.receive_packages(
-        receiver_pool_subject,
-        deliverator_pool_subject,
-        coordinates_store_subject,
-        distances_cache_subject,
-        navigator_subject,
-        random_packages_chunks,
-      )
-
-      int.random(2000) |> process.sleep
-
-      toss_packages(
-        receiver_pool_subject,
-        deliverator_pool_subject,
-        coordinates_store_subject,
-        distances_cache_subject,
-        navigator_subject,
-        chunks_count - 1,
-      )
-    }
-  }
 }

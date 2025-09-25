@@ -16,9 +16,7 @@ pub const deliverator_pool_limit = 2
 
 pub const deliverator_batch_size = 2
 
-pub const toss_package_size = 7
-
-pub const toss_packages_count = 2
+pub const random_packages_count = 9
 
 pub const crash_factor_limit = 50
 
