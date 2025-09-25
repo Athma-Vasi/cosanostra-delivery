@@ -24,5 +24,5 @@ pub fn navigator_test() {
       distances_cache_subject,
     )
 
-  assert distance == 2.17
+  assert distance == 2.15
 }

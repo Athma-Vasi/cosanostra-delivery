@@ -1,4 +1,5 @@
 import gleam/erlang/process
+import gleam/result
 import navigator/distances_cache
 
 pub fn distances_cache_test() {
@@ -15,7 +16,8 @@ pub fn distances_cache_test() {
     test_from,
     test_to,
   )
-  let _distance =
+  let distance =
     distances_cache.get_distance(distances_cache_subject, test_from, test_to)
-  // assert distance == 244.33
+    |> result.unwrap(0.0)
+  assert distance != 0.0 && distance == 244.33
 }
