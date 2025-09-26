@@ -18,7 +18,7 @@ pub const deliverator_batch_size = 2
 
 pub const random_packages_count = 9
 
-pub const crash_factor_limit = 50
+pub const crash_factor_limit = 90
 
 pub const receiver_start_geoid = 56_001_962_700
 

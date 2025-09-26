@@ -101,7 +101,6 @@ fn find_available_deliverators(
     let #(status, restarts, packets, distance_so_far) = tracking_info
     case status, packets {
       Idle, [] -> [#(deliverator_subject, restarts, distance_so_far), ..acc]
-
       Idle, _packets | Busy, [] | Busy, _packets -> acc
     }
   })
@@ -133,15 +132,17 @@ fn send_batches_to_available_deliverators(
     [available, ..rest_availables], [batch, ..rest_batches] -> {
       let #(deliverator_subject, restarts, distance_so_far) = available
       send_to_deliverator(deliverator_subject, deliverator_pool_subject, batch)
+      let updated_deliverators_tracker =
+        updated_deliverators_tracker
+        |> dict.insert(deliverator_subject, #(
+          Busy,
+          restarts,
+          batch,
+          distance_so_far,
+        ))
 
       send_batches_to_available_deliverators(
-        updated_deliverators_tracker
-          |> dict.insert(deliverator_subject, #(
-            Busy,
-            restarts,
-            batch,
-            distance_so_far,
-          )),
+        updated_deliverators_tracker,
         rest_availables,
         rest_batches,
         deliverator_pool_subject,
@@ -162,7 +163,6 @@ fn handle_pool_message(
 
       // insert batch into queue
       let updated_queue = batches_packets_queue |> list.append([batch])
-
       let available_deliverators =
         find_available_deliverators(deliverators_tracker)
 
@@ -206,24 +206,8 @@ fn handle_pool_message(
         |> dict.get(deliverator_subject)
         |> result.unwrap(or: #(Idle, 0, [], 0.0))
 
-      let total_packets_remaining =
-        updated_deliverators_tracker
-        |> dict.fold(
-          from: 0,
-          with: fn(acc, _deliverator_subject, tracking_info) {
-            let #(_status, _restarts, packets, _distance_so_far) = tracking_info
-            acc + list.length(packets)
-          },
-        )
-
-      echo "𓃰.  "
-        <> "Packets remaining for deliverator: "
+      echo "Packets remaining for deliverator: "
         <> packets_remaining_for_deliverator |> list.length |> int.to_string
-        <> " with subject: "
-        <> string.inspect(deliverator_subject)
-        <> "<>"
-        <> " total packets remaining"
-        <> int.to_string(total_packets_remaining)
 
       actor.continue(#(batches_packets_queue, updated_deliverators_tracker))
     }
@@ -260,13 +244,11 @@ fn handle_pool_message(
           let #(batches, sliced_queue) =
             batch_and_slice_queue(packets_to_deliver, 1)
           let batch = utils.get_first_batch(batches)
-
           send_to_deliverator(
             deliverator_subject,
             deliverator_pool_subject,
             batch,
           )
-
           let updated_deliverators_tracker =
             deliverators_tracker
             |> dict.insert(deliverator_subject, #(
@@ -356,7 +338,6 @@ fn handle_pool_message(
               undelivered,
               distance_so_far,
             ))
-
           // send remaining packets to deliverator to try again
           send_to_deliverator(
             deliverator_subject,

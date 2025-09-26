@@ -7,6 +7,7 @@ import gleam/list
 import gleam/option
 import gleam/otp/actor
 import gleam/result
+import gleam/string
 import navigator/coordinates_store
 import navigator/distances_cache
 import navigator/navigator
@@ -92,6 +93,7 @@ fn create_and_monitor_receivers_helper(
 ) {
   case available_slots == 0 {
     True -> #(new_receivers_subjects, updated_receivers_tracker)
+
     False -> {
       // creating an actor automatically links it to the calling process
       let assert Ok(new_receiver) = new_receiver()
@@ -125,30 +127,6 @@ fn create_and_monitor_receivers(
     available_slots,
     packages_remaining,
   )
-  // let available_range = list.range(from: 1, to: available_slots)
-
-  // let #(new_receivers_subjects, updated_receivers_tracker) =
-  //   available_range
-  //   |> list.fold(from: #([], receivers_tracker), with: fn(acc, _package) {
-  //     let #(new_receivers_subjects, updated_receivers_tracker) = acc
-  //     // creating an actor automatically links it to the calling process
-  //     let assert Ok(new_receiver) = new_receiver()
-  //     let monitor = process.monitor(new_receiver.pid)
-  //     // unlinking avoids a cascading crash of the pool
-  //     process.unlink(new_receiver.pid)
-  //     let new_receiver_subject = new_receiver.data
-
-  //     #(
-  //       [new_receiver_subject, ..new_receivers_subjects],
-  //       updated_receivers_tracker
-  //         |> dict.insert(new_receiver_subject, #(
-  //           packages_remaining,
-  //           option.Some(monitor),
-  //         )),
-  //     )
-  //   })
-
-  // #(new_receivers_subjects, updated_receivers_tracker)
 }
 
 fn select_monitors_and_subject(receiver_pool_subject: ReceiverPoolSubject) {
@@ -333,6 +311,8 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       navigator_subject,
       packages,
     ) -> {
+      echo "Receiver Pool received: " <> string.inspect(packages)
+
       let updated_queue = package_queue |> list.append(packages)
       let available_slots =
         constants.receiver_pool_limit - dict.size(receivers_tracker)
@@ -404,6 +384,9 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       navigator_subject,
       deliverator_shipment,
     ) -> {
+      echo "Receiver Pool received computed path from: "
+        <> string.inspect(receiver_subject)
+
       // grab geoids to insert new shortest path with distances
       let #(geoids, path_with_distances) =
         split_shortest_path(deliverator_shipment)
@@ -491,6 +474,12 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
             process.Normal | process.Killed -> actor.continue(state)
 
             process.Abnormal(_rsn) -> {
+              echo "Receiver Pool received process down message"
+                <> " for monitor_ref: "
+                <> string.inspect(monitor_ref)
+                <> " with reason: "
+                <> string.inspect(reason)
+
               let #(crashed_subject, tracking_info) =
                 find_crashed_subject_info(receivers_tracker, monitor_ref)
               let #(packages_remaining, _monitor_maybe) = tracking_info
