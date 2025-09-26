@@ -50,7 +50,7 @@ receiver_pool_sequence
                         D➡F: get_coordinates(to)
                         F➡➡D: returns coordinates
                     end
-                    D-->>C: returns calculated distance
+                    D➡➡C: returns calculated distance
                 deactivate D
                 C-->>B: path_computed_success(shipment)
             deactivate C
