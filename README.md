@@ -15,6 +15,11 @@ This project simulates a delivery system built with Gleam and the OTP framework.
 ## Sequence Pseudocode
 A text-based pseudocode representation of the sequence diagrams for the main actors, illustrating their interactions and workflows.
 
+#### Legend
+- `➡`: Asynchronous message sent to another actor.
+- `➡➡`: Asynchronous reply from another actor.
+- `->>`: Synchronous message sent to another actor.
+- `-->>`: Synchronous reply from another actor.
 
 ### Receiver Pool
 
@@ -29,27 +34,27 @@ receiver_pool_sequence
     actor G as DeliveratorPool
 
     A->>B: receive_packages(packages)    
-        B->>B: Checks memoization table
+        B: Checks memoization table
         alt Batch is not memoized
-            B->>C: Spawns new Receiver
-            C->>B: process is unlinked and monitored 
+            B: Spawns new Receiver
+            B: process is unlinked and monitored 
             B->>C: calculate_shortest_path(batch)
             activate C
-                C->>D: get_distance(from, to)
+                C➡D: get_distance(from, to)
                 activate D
-                    D->>E: get_distance(from, to)
-                    E-->>D: returns distance
+                    D➡E: get_distance(from, to)
+                    E➡➡D: returns distance
                     alt If cache is a miss
-                        D->>F: get_coordinates(from)
-                        F-->>D: returns coordinates
-                        D->>F: get_coordinates(to)
-                        F-->>D: returns coordinates
+                        D➡F: get_coordinates(from)
+                        F➡➡D: returns coordinates
+                        D➡F: get_coordinates(to)
+                        F➡➡D: returns coordinates
                     end
                     D-->>C: returns calculated distance
                 deactivate D
                 C-->>B: path_computed_success(shipment)
             deactivate C
-            B->>B: Updates memoization table
+            B: Updates memoization table
         end
         B->>G: receive_packets(shipment)
     deactivate B
@@ -64,26 +69,26 @@ navigator_sequence
     actor C as DistancesCache
     actor D as CoordinatesStore
 
-    A->>B: get_distance(from, to)
+    A➡B: get_distance(from, to)
     activate B
-        B->>C: get_distance(from, to)
+        B➡C: get_distance(from, to)
         activate C
-            C-->>B: returns Result(Float, Nil)
+            C➡➡B: returns Result(Float, Nil)
         deactivate C
         alt Cache is a hit (Ok(dist))
-            B->>B: Returns cached distance
+            B: Returns cached distance
         else Cache is a miss (Error(Nil))
-            B->>D: get_coordinates(from)
+            B➡D: get_coordinates(from)
             activate D
-                D-->>B: returns coordinates
+                D➡➡B: returns coordinates
             deactivate D
-            B->>D: get_coordinates(to)
+            B➡D: get_coordinates(to)
             activate D
-                D-->>B: returns coordinates
+                D➡➡B: returns coordinates
             deactivate D
-            B->>B: Calculates new distance
+            B: Calculates new distance
         end
-        B-->>A: returns final distance
+        B➡➡A: returns final distance
     deactivate B
 ```
 
@@ -97,20 +102,20 @@ deliverator_pool_sequence
 
     A->>B: receive_packets(batch)
     activate B
-        B->>B: Checks for available Deliverators
+        B: Checks for available Deliverators
         alt If a Deliverator is Idle
             B->>C: deliver_packets(batch)
             activate C
                 loop for each packet in batch
-                    C->>C: Simulates delivery
+                    C: Simulates delivery
                     C->>B: packet_delivered(packet)
                     activate B
-                        B->>B: Removes packet from Deliverator's list
+                        B: Removes packet from Deliverator's list
                     deactivate B
                 end
                 C->>B: deliverator_success()
             deactivate C
-            B->>B: Marks Deliverator as Idle
+            B: Marks Deliverator as Idle
         end
     deactivate B
 ```
