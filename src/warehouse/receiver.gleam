@@ -759,6 +759,7 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
 }
 
 pub fn new_receiver() {
+  echo "Starting new Receiver"
   actor.new([])
   |> actor.on_message(handle_receiver_message)
   |> actor.start

@@ -13,7 +13,7 @@ This project simulates a delivery system built with Gleam and the OTP framework.
 
 
 ## Sequence Pseudocode
-A text-based pseudocode representation of the sequence diagrams for the main actors, illustrating their interactions and workflows.
+A text-based pseudocode representation of the the interactions and workflows between the main actors.
 
 #### Legend
 - `➡`: Asynchronous message sent to another actor.
@@ -33,30 +33,30 @@ receiver_pool_sequence
     actor F as CoordinatesStore
     actor G as DeliveratorPool
 
-    A->>B: receive_packages(packages)    
+    A->>B: ReceivePackages(packages)    
         B: Checks memoization table
         alt Batch is not memoized
             B: Spawns new Receiver
-            B: process is unlinked and monitored 
-            B->>C: calculate_shortest_path(batch)
+            B: Process is unlinked and monitored 
+            B->>C: CalculateShortestPath(batch)
             activate C
-                C➡D: get_distance(from, to)
+                C➡D: GetDistance(from, to)
                 activate D
-                    D➡E: get_distance(from, to)
+                    D➡E: GetDistance(from, to)
                     E➡➡D: returns distance
                     alt If cache is a miss
-                        D➡F: get_coordinates(from)
+                        D➡F: GetCoordinates(from)
                         F➡➡D: returns coordinates
-                        D➡F: get_coordinates(to)
+                        D➡F: GetCoordinates(to)
                         F➡➡D: returns coordinates
                     end
                     D➡➡C: returns calculated distance
                 deactivate D
-                C-->>B: path_computed_success(shipment)
+                C-->>B: PathComputedSuccess(shipment)
             deactivate C
             B: Updates memoization table
         end
-        B->>G: receive_packets(shipment)
+        B->>G: ReceivePackets(shipment)
     deactivate B
 ```
 
@@ -69,20 +69,20 @@ navigator_sequence
     actor C as DistancesCache
     actor D as CoordinatesStore
 
-    A➡B: get_distance(from, to)
+    A➡B: GetDistance(from, to)
     activate B
-        B➡C: get_distance(from, to)
+        B➡C: GetDistance(from, to)
         activate C
             C➡➡B: returns Result(Float, Nil)
         deactivate C
         alt Cache is a hit (Ok(dist))
             B: Returns cached distance
         else Cache is a miss (Error(Nil))
-            B➡D: get_coordinates(from)
+            B➡D: GetCoordinates(from)
             activate D
                 D➡➡B: returns coordinates
             deactivate D
-            B➡D: get_coordinates(to)
+            B➡D: GetCoordinates(to)
             activate D
                 D➡➡B: returns coordinates
             deactivate D
@@ -100,20 +100,20 @@ deliverator_pool_sequence
     actor B as DeliveratorPool
     actor C as Deliverator (Worker)
 
-    A->>B: receive_packets(batch)
+    A->>B: ReceivePackets(batch)
     activate B
         B: Checks for available Deliverators
         alt If a Deliverator is Idle
-            B->>C: deliver_packets(batch)
+            B->>C: DeliverPackets(batch)
             activate C
                 loop for each packet in batch
                     C: Simulates delivery
-                    C->>B: packet_delivered(packet)
+                    C->>B: PacketDelivered(packet)
                     activate B
                         B: Removes packet from Deliverator's list
                     deactivate B
                 end
-                C->>B: deliverator_success()
+                C->>B: DeliveratorSuccess()
             deactivate C
             B: Marks Deliverator as Idle
         end
@@ -126,3 +126,9 @@ deliverator_pool_sequence
 gleam run   # Run the project
 gleam test  # Run the tests
 ```
+
+## Acknowledgment
+
+Parts of this project draw conceptual inspiration from these Elixir projects: [elhex_delivery](https://github.com/omgneering/elhex_delivery) and [warehouse](https://github.com/omgneering/warehouse). The implementation here is in Gleam, adapted to leverage its concurrency features and the OTP framework.
+
+
