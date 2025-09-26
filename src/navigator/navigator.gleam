@@ -14,14 +14,14 @@ const timeout = 5000
 pub type NavigatorSubject =
   process.Subject(NavigatorMessage)
 
-pub type NavigatorMessage {
-  GetDistance(
-    reply_with: process.Subject(Float),
-    from: Int,
-    to: Int,
-    store_subject: coordinates_store.CoordinateStoreSubject,
-    cache_subject: distances_cache.DistancesCacheSubject,
+type NavigatorState =
+  #(
+    coordinates_store.CoordinateStoreSubject,
+    distances_cache.DistancesCacheSubject,
   )
+
+pub type NavigatorMessage {
+  GetDistance(reply_with: process.Subject(Float), from: Int, to: Int)
 }
 
 fn degrees_to_radians(degrees: Float) -> Float {
@@ -57,17 +57,20 @@ fn calculate_distance(from: #(Float, Float), to: #(Float, Float)) -> Float {
 }
 
 fn handle_message(
-  state: List(Nil),
+  state: NavigatorState,
   message: NavigatorMessage,
-) -> actor.Next(List(Nil), a) {
+) -> actor.Next(NavigatorState, a) {
+  let #(coordinates_store_subject, distances_cache_subject) = state
   case message {
-    GetDistance(client, from, to, store_subject, cache_subject) -> {
+    GetDistance(client, from, to) -> {
       let distance = case
-        distances_cache.get_distance(cache_subject, from, to)
+        distances_cache.get_distance(distances_cache_subject, from, to)
       {
         Error(Nil) -> {
-          let here = coordinates_store.get_coordinates(store_subject, from)
-          let there = coordinates_store.get_coordinates(store_subject, to)
+          let here =
+            coordinates_store.get_coordinates(coordinates_store_subject, from)
+          let there =
+            coordinates_store.get_coordinates(coordinates_store_subject, to)
           calculate_distance(here, there)
         }
         Ok(dist) -> dist
@@ -81,8 +84,14 @@ fn handle_message(
 
 pub fn new(
   name: process.Name(NavigatorMessage),
+  coordinates_store_name: process.Name(coordinates_store.StoreMessage),
+  distances_cache_name: process.Name(distances_cache.CacheMessage),
 ) -> Result(actor.Started(process.Subject(NavigatorMessage)), actor.StartError) {
-  actor.new([])
+  let state = #(
+    process.named_subject(coordinates_store_name),
+    process.named_subject(distances_cache_name),
+  )
+  actor.new(state)
   |> actor.on_message(handle_message)
   |> actor.named(name)
   |> actor.start
@@ -92,14 +101,6 @@ pub fn get_distance(
   subject: process.Subject(NavigatorMessage),
   from: Int,
   to: Int,
-  store_subject: coordinates_store.CoordinateStoreSubject,
-  cache_subject: distances_cache.DistancesCacheSubject,
 ) -> Float {
-  actor.call(subject, timeout, GetDistance(
-    _,
-    from,
-    to,
-    store_subject,
-    cache_subject,
-  ))
+  actor.call(subject, timeout, GetDistance(_, from, to))
 }

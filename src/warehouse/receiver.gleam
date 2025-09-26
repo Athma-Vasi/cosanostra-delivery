@@ -8,8 +8,6 @@ import gleam/option
 import gleam/otp/actor
 import gleam/result
 import gleam/string
-import navigator/coordinates_store
-import navigator/distances_cache
 import navigator/navigator
 import warehouse/deliverator.{type Distance, type GeoId, type Parcel}
 import warehouse/utils
@@ -35,8 +33,6 @@ pub opaque type ReceiverPoolMessage {
     deliverator_pool_subject: process.Subject(
       deliverator.DeliveratorPoolMessage,
     ),
-    coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-    distances_cache_subject: distances_cache.DistancesCacheSubject,
     navigator_subject: navigator.NavigatorSubject,
     packages: List(Package),
   )
@@ -47,8 +43,6 @@ pub opaque type ReceiverPoolMessage {
     deliverator_pool_subject: process.Subject(
       deliverator.DeliveratorPoolMessage,
     ),
-    coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-    distances_cache_subject: distances_cache.DistancesCacheSubject,
     navigator_subject: navigator.NavigatorSubject,
     deliverator_shipment: DeliveratorShipment,
   )
@@ -72,8 +66,6 @@ type SubjectsForProcessDown =
   #(
     ReceiverPoolSubject,
     process.Subject(deliverator.DeliveratorPoolMessage),
-    coordinates_store.CoordinateStoreSubject,
-    distances_cache.DistancesCacheSubject,
     navigator.NavigatorSubject,
   )
 
@@ -138,8 +130,6 @@ fn select_monitors_and_subject(receiver_pool_subject: ReceiverPoolSubject) {
 }
 
 fn zip_send_to_receivers(
-  coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-  distances_cache_subject: distances_cache.DistancesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
   deliverator_pool_subject: process.Subject(deliverator.DeliveratorPoolMessage),
   new_receivers_subjects: List(ReceiverSubject),
@@ -155,8 +145,6 @@ fn zip_send_to_receivers(
     calculate_shortest_path(
       receiver_subject,
       receiver_pool_subject,
-      coordinates_store_subject,
-      distances_cache_subject,
       navigator_subject,
       deliverator_pool_subject,
       batch,
@@ -306,8 +294,6 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
     ReceivePackages(
       receiver_pool_subject,
       deliverator_pool_subject,
-      coordinates_store_subject,
-      distances_cache_subject,
       navigator_subject,
       packages,
     ) -> {
@@ -354,8 +340,6 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
           let selector = select_monitors_and_subject(receiver_pool_subject)
           let updated_receivers_tracker =
             zip_send_to_receivers(
-              coordinates_store_subject,
-              distances_cache_subject,
               navigator_subject,
               deliverator_pool_subject,
               new_receivers_subjects,
@@ -379,8 +363,6 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
       receiver_subject,
       receiver_pool_subject,
       deliverator_pool_subject,
-      coordinates_store_subject,
-      distances_cache_subject,
       navigator_subject,
       deliverator_shipment,
     ) -> {
@@ -439,8 +421,6 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
           calculate_shortest_path(
             receiver_subject,
             receiver_pool_subject,
-            coordinates_store_subject,
-            distances_cache_subject,
             navigator_subject,
             deliverator_pool_subject,
             batch,
@@ -458,13 +438,8 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
 
     Mon(process_down_message) -> {
       process.sleep(1000)
-      let #(
-        receiver_pool_subject,
-        deliverator_pool_subject,
-        coordinates_store_subject,
-        distances_cache_subject,
-        navigator_subject,
-      ) = subjects_for_process_down
+      let #(receiver_pool_subject, deliverator_pool_subject, navigator_subject) =
+        subjects_for_process_down
 
       case process_down_message {
         process.PortDown(_monitor_ref, _pid, _reason) -> actor.continue(state)
@@ -492,8 +467,6 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
               let selector = select_monitors_and_subject(receiver_pool_subject)
               let updated_receivers_tracker =
                 zip_send_to_receivers(
-                  coordinates_store_subject,
-                  distances_cache_subject,
                   navigator_subject,
                   deliverator_pool_subject,
                   new_receivers_subjects,
@@ -519,8 +492,6 @@ fn handle_pool_message(state: ReceiverPoolState, message: ReceiverPoolMessage) {
 
 pub fn new_pool(
   receiver_pool_name: process.Name(ReceiverPoolMessage),
-  coordinates_store_name: process.Name(coordinates_store.StoreMessage),
-  distances_cache_name: process.Name(distances_cache.CacheMessage),
   navigator_name: process.Name(navigator.NavigatorMessage),
   deliverator_pool_name: process.Name(deliverator.DeliveratorPoolMessage),
 ) {
@@ -529,15 +500,11 @@ pub fn new_pool(
   let memoized_shortest_distances_paths = dict.new()
 
   let receiver_pool_subject = process.named_subject(receiver_pool_name)
-  let coordinates_store_subject = process.named_subject(coordinates_store_name)
-  let distances_cache_subject = process.named_subject(distances_cache_name)
   let navigator_subject = process.named_subject(navigator_name)
   let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
   let subjects_for_process_down = #(
     receiver_pool_subject,
     deliverator_pool_subject,
-    coordinates_store_subject,
-    distances_cache_subject,
     navigator_subject,
   )
 
@@ -557,8 +524,6 @@ pub fn new_pool(
 pub fn receive_packages(
   receiver_pool_subject: ReceiverPoolSubject,
   deliverator_pool_subject: process.Subject(deliverator.DeliveratorPoolMessage),
-  coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-  distances_cache_subject: distances_cache.DistancesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
   packages: List(Package),
 ) {
@@ -567,8 +532,6 @@ pub fn receive_packages(
     ReceivePackages(
       receiver_pool_subject,
       deliverator_pool_subject,
-      coordinates_store_subject,
-      distances_cache_subject,
       navigator_subject,
       packages,
     ),
@@ -579,8 +542,6 @@ fn path_computed_success(
   receiver_subject: ReceiverSubject,
   receiver_pool_subject: ReceiverPoolSubject,
   deliverator_pool_subject: process.Subject(deliverator.DeliveratorPoolMessage),
-  coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-  distances_cache_subject: distances_cache.DistancesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
   deliverator_shipment: DeliveratorShipment,
 ) {
@@ -590,8 +551,6 @@ fn path_computed_success(
       receiver_subject,
       receiver_pool_subject,
       deliverator_pool_subject,
-      coordinates_store_subject,
-      distances_cache_subject,
       navigator_subject,
       deliverator_shipment,
     ),
@@ -604,8 +563,6 @@ pub opaque type ReceiverMessage {
   CalculateShortestPath(
     receiver_subject: ReceiverSubject,
     receiver_pool_subject: ReceiverPoolSubject,
-    coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-    distances_cache_subject: distances_cache.DistancesCacheSubject,
     navigator_subject: navigator.NavigatorSubject,
     deliverator_pool_subject: process.Subject(
       deliverator.DeliveratorPoolMessage,
@@ -681,8 +638,6 @@ fn create_geoid_pairs(paths: List(List(GeoId))) -> List(List(#(GeoId, GeoId))) {
 
 fn compute_distance_per_pair(
   geoid_pairs_list: List(List(#(GeoId, GeoId))),
-  coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-  distances_cache_subject: distances_cache.DistancesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
 ) -> List(List(#(#(GeoId, GeoId), Distance))) {
   geoid_pairs_list
@@ -695,14 +650,7 @@ fn compute_distance_per_pair(
     geoid_pairs
     |> list.map(with: fn(geoid_pair) {
       let #(from, to) = geoid_pair
-      let distance =
-        navigator.get_distance(
-          navigator_subject,
-          from,
-          to,
-          coordinates_store_subject,
-          distances_cache_subject,
-        )
+      let distance = navigator.get_distance(navigator_subject, from, to)
 
       #(geoid_pair, distance)
     })
@@ -775,8 +723,6 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
     CalculateShortestPath(
       receiver_subject,
       receiver_pool_subject,
-      coordinates_store_subject,
-      distances_cache_subject,
       navigator_subject,
       deliverator_pool_subject,
       packages,
@@ -790,11 +736,7 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
         generate_permutations(geoids)
         |> add_home_base_to_path
         |> create_geoid_pairs
-        |> compute_distance_per_pair(
-          coordinates_store_subject,
-          distances_cache_subject,
-          navigator_subject,
-        )
+        |> compute_distance_per_pair(navigator_subject)
         |> find_shortest_distance_path
         |> create_deliverator_shipment(geoid_parcel_table)
 
@@ -802,8 +744,6 @@ fn handle_receiver_message(state: List(Nil), message: ReceiverMessage) {
         receiver_subject,
         receiver_pool_subject,
         deliverator_pool_subject,
-        coordinates_store_subject,
-        distances_cache_subject,
         navigator_subject,
         deliverator_shipment,
       )
@@ -827,8 +767,6 @@ pub fn new_receiver() {
 fn calculate_shortest_path(
   receiver_subject: ReceiverSubject,
   receiver_pool_subject: ReceiverPoolSubject,
-  coordinates_store_subject: coordinates_store.CoordinateStoreSubject,
-  distances_cache_subject: distances_cache.DistancesCacheSubject,
   navigator_subject: navigator.NavigatorSubject,
   deliverator_pool_subject: process.Subject(deliverator.DeliveratorPoolMessage),
   packages: List(Package),
@@ -838,8 +776,6 @@ fn calculate_shortest_path(
     CalculateShortestPath(
       receiver_subject,
       receiver_pool_subject,
-      coordinates_store_subject,
-      distances_cache_subject,
       navigator_subject,
       deliverator_pool_subject,
       packages,

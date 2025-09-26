@@ -4,8 +4,6 @@ import gleam/int
 import gleam/list
 import gleam/otp/static_supervisor
 import gleam/otp/supervision
-import navigator/coordinates_store
-import navigator/distances_cache
 import navigator/navigator
 import warehouse/deliverator
 import warehouse/receiver
@@ -18,7 +16,7 @@ type DeliveratorPoolName =
 type DeliveratorName =
   process.Name(deliverator.DeliveratorMessage)
 
-fn generate_deliverator_name(max_pool_limit) {
+fn generate_deliverator_name(max_pool_limit) -> DeliveratorName {
   let names_pool = ["Hiro Protagonist", "Yours Truly", "Vitaly Chernobyl"]
   let random_index = names_pool |> list.length |> int.random
 
@@ -60,13 +58,17 @@ fn start_deliverator(
   fn() {
     let deliverator_subject = process.named_subject(deliverator_name)
     let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
+    let new_deliverator = deliverator.new_deliverator(deliverator_name)
+
+    process.sleep(1000)
 
     // restart counts are tracked in the deliverator pool
     deliverator.deliverator_restart(
       deliverator_subject,
       deliverator_pool_subject,
     )
-    deliverator.new_deliverator(deliverator_name)
+
+    new_deliverator
   }
 }
 
@@ -76,10 +78,13 @@ fn start_deliverators(
   deliverator_names: List(DeliveratorName),
 ) -> static_supervisor.Builder {
   deliverator_names
-  |> list.fold(from: deliverator_sup_builder, with: fn(sup, name) {
+  |> list.fold(from: deliverator_sup_builder, with: fn(sup, deliverator_name) {
     sup
     |> static_supervisor.add(
-      supervision.worker(start_deliverator(name, deliverator_pool_name)),
+      supervision.worker(start_deliverator(
+        deliverator_name,
+        deliverator_pool_name,
+      )),
     )
   })
 }
@@ -115,35 +120,23 @@ type ReceiverPoolName =
 
 fn start_receiver_pool(
   receiver_pool_name: ReceiverPoolName,
-  coordinates_store_name: process.Name(coordinates_store.StoreMessage),
-  distances_cache_name: process.Name(distances_cache.CacheMessage),
   navigator_name: process.Name(navigator.NavigatorMessage),
   deliverator_pool_name: DeliveratorPoolName,
 ) {
   fn() {
-    receiver.new_pool(
-      receiver_pool_name,
-      coordinates_store_name,
-      distances_cache_name,
-      navigator_name,
-      deliverator_pool_name,
-    )
+    receiver.new_pool(receiver_pool_name, navigator_name, deliverator_pool_name)
   }
 }
 
 fn start_receiver_pool_supervisor(
   receiver_pool_name: ReceiverPoolName,
   deliverator_pool_name: DeliveratorPoolName,
-  coordinates_store_name: process.Name(coordinates_store.StoreMessage),
-  distances_cache_name: process.Name(distances_cache.CacheMessage),
   navigator_name: process.Name(navigator.NavigatorMessage),
 ) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
   static_supervisor.new(static_supervisor.OneForOne)
   |> static_supervisor.add(
     supervision.worker(start_receiver_pool(
       receiver_pool_name,
-      coordinates_store_name,
-      distances_cache_name,
       navigator_name,
       deliverator_pool_name,
     )),
@@ -155,8 +148,6 @@ fn start_receiver_pool_supervisor(
 pub fn start_warehouse_supervisor(
   receiver_pool_name,
   deliverator_pool_name,
-  coordinates_store_name,
-  distances_cache_name,
   navigator_name,
 ) -> supervision.ChildSpecification(static_supervisor.Supervisor) {
   let deliverator_sup_spec =
@@ -166,8 +157,6 @@ pub fn start_warehouse_supervisor(
     start_receiver_pool_supervisor(
       receiver_pool_name,
       deliverator_pool_name,
-      coordinates_store_name,
-      distances_cache_name,
       navigator_name,
     )
 

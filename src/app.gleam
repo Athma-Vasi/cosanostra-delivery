@@ -26,8 +26,6 @@ pub fn start() {
     warehouse_sup.start_warehouse_supervisor(
       receiver_pool_name,
       deliverator_pool_name,
-      coordinates_store_name,
-      distances_cache_name,
       navigator_name,
     )
 
@@ -42,8 +40,6 @@ pub fn start() {
 
   let receiver_pool_subject = process.named_subject(receiver_pool_name)
   let deliverator_pool_subject = process.named_subject(deliverator_pool_name)
-  let coordinates_store_subject = process.named_subject(coordinates_store_name)
-  let distances_cache_subject = process.named_subject(distances_cache_name)
   let navigator_subject = process.named_subject(navigator_name)
 
   process.sleep(1000)
@@ -53,8 +49,6 @@ pub fn start() {
   receiver.receive_packages(
     receiver_pool_subject,
     deliverator_pool_subject,
-    coordinates_store_subject,
-    distances_cache_subject,
     navigator_subject,
     random_packages_chunks,
   )

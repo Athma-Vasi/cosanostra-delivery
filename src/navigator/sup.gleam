@@ -9,8 +9,12 @@ fn start_parser(name: process.Name(coordinates_store.StoreMessage)) {
   fn() { coordinates_store.new(name) }
 }
 
-fn start_navigator(name: process.Name(navigator.NavigatorMessage)) {
-  fn() { navigator.new(name) }
+fn start_navigator(
+  name: process.Name(navigator.NavigatorMessage),
+  coordinates_store_name: process.Name(coordinates_store.StoreMessage),
+  distances_cache_name: process.Name(distances_cache.CacheMessage),
+) {
+  fn() { navigator.new(name, coordinates_store_name, distances_cache_name) }
 }
 
 fn start_distances_cache(name: process.Name(distances_cache.CacheMessage)) {
@@ -26,7 +30,13 @@ pub fn start_navigator_supervisor(
   |> static_supervisor.add(
     supervision.worker(start_parser(coordinates_store_name)),
   )
-  |> static_supervisor.add(supervision.worker(start_navigator(navigator_name)))
+  |> static_supervisor.add(
+    supervision.worker(start_navigator(
+      navigator_name,
+      coordinates_store_name,
+      distances_cache_name,
+    )),
+  )
   |> static_supervisor.add(
     supervision.worker(start_distances_cache(distances_cache_name)),
   )
